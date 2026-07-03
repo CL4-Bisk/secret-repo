@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'core/config/supabase_config.dart';
+import 'features/auth/auth_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,6 +21,14 @@ final _routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     routes: [
       GoRoute(path: '/', builder: (context, state) => const LandingScreen()),
+      GoRoute(
+        path: '/sign-in',
+        builder: (context, state) => const SignInScreen(),
+      ),
+      GoRoute(
+        path: '/sign-up',
+        builder: (context, state) => const SignUpScreen(),
+      ),
     ],
   );
 });
@@ -67,31 +76,16 @@ class LandingScreen extends StatelessWidget {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            return Center(
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 960),
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        'Apartment Manager',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.displaySmall
-                            ?.copyWith(fontWeight: FontWeight.w800),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Track dues, proof uploads, and payment history.',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(color: colorScheme.onSurfaceVariant),
-                      ),
-                      const SizedBox(height: 32),
-                      const RoleCardsLayout(),
-                    ],
+                constraints: BoxConstraints(
+                  minHeight: constraints.maxHeight - 48,
+                ),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 960),
+                    child: _LandingContent(colorScheme: colorScheme),
                   ),
                 ),
               ),
@@ -99,6 +93,57 @@ class LandingScreen extends StatelessWidget {
           },
         ),
       ),
+    );
+  }
+}
+
+class _LandingContent extends StatelessWidget {
+  const _LandingContent({required this.colorScheme});
+
+  final ColorScheme colorScheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Apartment Manager',
+          textAlign: TextAlign.center,
+          style: Theme.of(
+            context,
+          ).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'Track dues, proof uploads, and payment history.',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 32),
+        const RoleCardsLayout(),
+        const SizedBox(height: 32),
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            FilledButton(
+              key: const Key('landing-sign-up-button'),
+              onPressed: () => context.go('/sign-up'),
+              child: const Text('Create owner account'),
+            ),
+            OutlinedButton(
+              key: const Key('landing-sign-in-button'),
+              onPressed: () => context.go('/sign-in'),
+              child: const Text('Sign in'),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
