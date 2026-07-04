@@ -104,6 +104,10 @@ class _AuthScaffoldState extends ConsumerState<AuthScaffold> {
           ),
         ),
       );
+
+      if (!_isSignUp) {
+        context.go('/dashboard');
+      }
     } catch (error) {
       if (!mounted) {
         return;

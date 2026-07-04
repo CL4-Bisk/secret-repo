@@ -14,11 +14,17 @@ class AuthRepository {
 
   final SupabaseClient _client;
 
+  String? get currentUserEmail => _client.auth.currentUser?.email;
+
   Future<void> signIn({required String email, required String password}) async {
     await _client.auth.signInWithPassword(
       email: email.trim(),
       password: password,
     );
+  }
+
+  Future<void> signOut() async {
+    await _client.auth.signOut();
   }
 
   Future<void> signUpOwner({
