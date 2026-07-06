@@ -75,6 +75,8 @@ class DashboardRepository implements DashboardRepositoryContract {
       throw ArgumentError.value(name, 'name', 'Apartment name is required.');
     }
 
+    await _ensureCurrentUserProfile(userId: userId);
+
     final organization = await client
         .from('organizations')
         .insert(ownerOrganizationInsert(name: trimmedName, userId: userId))
@@ -91,6 +93,41 @@ class DashboardRepository implements DashboardRepositoryContract {
         .insert(
           ownerMembershipInsert(organizationId: organizationId, userId: userId),
         );
+  }
+
+  Future<void> _ensureCurrentUserProfile({required String userId}) async {
+    final profile = await client
+        .from('profiles')
+        .select('id')
+        .eq('id', userId)
+        .maybeSingle();
+
+    if (profile != null) {
+      return;
+    }
+
+    await client
+        .from('profiles')
+        .insert(
+          currentUserProfileInsert(
+            userId: userId,
+            fallbackName: authRepository.currentUserEmail,
+          ),
+        );
+  }
+
+  static Map<String, Object> currentUserProfileInsert({
+    required String userId,
+    required String? fallbackName,
+  }) {
+    final trimmedName = fallbackName?.trim();
+
+    return {
+      'id': userId,
+      'full_name': trimmedName == null || trimmedName.isEmpty
+          ? 'New user'
+          : trimmedName,
+    };
   }
 
   static Map<String, Object> ownerOrganizationInsert({
