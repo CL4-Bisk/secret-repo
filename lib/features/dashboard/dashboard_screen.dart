@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../auth/auth_repository.dart';
+import 'dashboard_repository.dart';
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -10,7 +11,7 @@ class DashboardScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final authRepository = ref.watch(authRepositoryProvider);
-    final email = authRepository.currentUserEmail ?? 'Signed in user';
+    final summary = ref.watch(dashboardSummaryProvider);
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -29,59 +30,123 @@ class DashboardScreen extends ConsumerWidget {
         ],
       ),
       body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, _) {
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 960),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: summary.when(
+          data: (value) => _DashboardContent(summary: value),
+          error: (error, _) => _DashboardError(
+            message: error.toString(),
+            colorScheme: colorScheme,
+          ),
+          loading: () => const Center(child: CircularProgressIndicator()),
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardContent extends StatelessWidget {
+  const _DashboardContent({required this.summary});
+
+  final DashboardSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return LayoutBuilder(
+      builder: (context, _) {
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 960),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Dashboard',
+                    key: const Key('dashboard-screen-title'),
+                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    summary.primaryIdentityLabel,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Wrap(
+                    spacing: 16,
+                    runSpacing: 16,
                     children: [
-                      Text(
-                        'Dashboard',
-                        key: const Key('dashboard-screen-title'),
-                        style: Theme.of(context).textTheme.displaySmall
-                            ?.copyWith(fontWeight: FontWeight.w800),
+                      _DashboardSummaryCard(
+                        title: 'Role',
+                        value: summary.roleLabel,
+                        description: summary.roleDescription,
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        email,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(color: colorScheme.onSurfaceVariant),
+                      _DashboardSummaryCard(
+                        title: 'Apartment',
+                        value: summary.apartmentLabel,
+                        description: summary.apartmentDescription,
                       ),
-                      const SizedBox(height: 24),
-                      Wrap(
-                        spacing: 16,
-                        runSpacing: 16,
-                        children: const [
-                          _DashboardSummaryCard(
-                            title: 'Role',
-                            value: 'Pending setup',
-                            description:
-                                'Your owner or boarder role will come from memberships.',
-                          ),
-                          _DashboardSummaryCard(
-                            title: 'Apartment',
-                            value: 'No apartment yet',
-                            description:
-                                'Owner onboarding will create the apartment record.',
-                          ),
-                          _DashboardSummaryCard(
-                            title: 'Payments',
-                            value: 'Manual proof first',
-                            description:
-                                'Dues and proof uploads come after onboarding.',
-                          ),
-                        ],
+                      const _DashboardSummaryCard(
+                        title: 'Payments',
+                        value: 'Manual proof first',
+                        description:
+                            'Dues and proof uploads come after onboarding.',
                       ),
                     ],
                   ),
-                ),
+                ],
               ),
-            );
-          },
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _DashboardError extends StatelessWidget {
+  const _DashboardError({required this.message, required this.colorScheme});
+
+  final String message;
+  final ColorScheme colorScheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Card(
+            elevation: 0,
+            color: colorScheme.errorContainer,
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Dashboard data failed to load',
+                    style: Theme.of(context).textTheme.titleLarge,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    message,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onErrorContainer,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );

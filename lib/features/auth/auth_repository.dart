@@ -16,6 +16,8 @@ class AuthRepository {
 
   bool get isSignedIn => _client.auth.currentSession != null;
 
+  String? get currentUserId => _client.auth.currentUser?.id;
+
   String? get currentUserEmail => _client.auth.currentUser?.email;
 
   Future<void> signIn({required String email, required String password}) async {
