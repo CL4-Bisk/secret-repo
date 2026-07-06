@@ -165,9 +165,14 @@ class _LandingContent extends StatelessWidget {
           runSpacing: 12,
           children: [
             FilledButton(
-              key: const Key('landing-sign-up-button'),
+              key: const Key('landing-owner-sign-up-button'),
               onPressed: () => context.go('/sign-up'),
               child: const Text('Create owner account'),
+            ),
+            FilledButton.tonal(
+              key: const Key('landing-boarder-sign-up-button'),
+              onPressed: () => context.go('/sign-up'),
+              child: const Text('Create boarder account'),
             ),
             OutlinedButton(
               key: const Key('landing-sign-in-button'),
@@ -175,6 +180,14 @@ class _LandingContent extends StatelessWidget {
               child: const Text('Sign in'),
             ),
           ],
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'Boarders create an account first, then join with the owner invite code.',
+          textAlign: TextAlign.center,
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
         ),
       ],
     );

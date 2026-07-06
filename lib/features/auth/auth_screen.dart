@@ -24,8 +24,9 @@ class SignUpScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const AuthScaffold(
-      title: 'Create owner account',
-      subtitle: 'Start by creating the owner login for this apartment.',
+      title: 'Create account',
+      subtitle:
+          'Owners create an apartment. Boarders join later with an invite code.',
       submitLabel: 'Create account',
       mode: AuthFormMode.signUp,
     );
