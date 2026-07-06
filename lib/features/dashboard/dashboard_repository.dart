@@ -4,7 +4,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../auth/auth_repository.dart';
 
-final dashboardRepositoryProvider = Provider<DashboardRepository>((ref) {
+final dashboardRepositoryProvider = Provider<DashboardRepositoryContract>((
+  ref,
+) {
   return DashboardRepository(
     client: ref.watch(supabaseClientProvider),
     authRepository: ref.watch(authRepositoryProvider),
@@ -15,7 +17,13 @@ final dashboardSummaryProvider = FutureProvider<DashboardSummary>((ref) {
   return ref.watch(dashboardRepositoryProvider).fetchSummary();
 });
 
-class DashboardRepository {
+abstract interface class DashboardRepositoryContract {
+  Future<DashboardSummary> fetchSummary();
+
+  Future<void> createOwnerApartment({required String name});
+}
+
+class DashboardRepository implements DashboardRepositoryContract {
   static const membershipUserIdColumn = 'user_id';
 
   const DashboardRepository({
@@ -26,6 +34,7 @@ class DashboardRepository {
   final SupabaseClient client;
   final AuthRepository authRepository;
 
+  @override
   Future<DashboardSummary> fetchSummary() async {
     final userId = authRepository.currentUserId;
     final email = authRepository.currentUserEmail ?? 'Signed in user';
@@ -52,6 +61,54 @@ class DashboardRepository {
       email: email,
       membership: _membershipFromRow(membership),
     );
+  }
+
+  @override
+  Future<void> createOwnerApartment({required String name}) async {
+    final userId = authRepository.currentUserId;
+    if (userId == null) {
+      throw StateError('You must be signed in to create an apartment.');
+    }
+
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) {
+      throw ArgumentError.value(name, 'name', 'Apartment name is required.');
+    }
+
+    final organization = await client
+        .from('organizations')
+        .insert(ownerOrganizationInsert(name: trimmedName, userId: userId))
+        .select('id')
+        .single();
+    final organizationId = _readString(organization, 'id');
+
+    if (organizationId == null) {
+      throw StateError('Supabase did not return the new apartment id.');
+    }
+
+    await client
+        .from('memberships')
+        .insert(
+          ownerMembershipInsert(organizationId: organizationId, userId: userId),
+        );
+  }
+
+  static Map<String, Object> ownerOrganizationInsert({
+    required String name,
+    required String userId,
+  }) {
+    return {'name': name.trim(), 'created_by': userId};
+  }
+
+  static Map<String, Object> ownerMembershipInsert({
+    required String organizationId,
+    required String userId,
+  }) {
+    return {
+      'organization_id': organizationId,
+      membershipUserIdColumn: userId,
+      'role': 'owner',
+    };
   }
 
   DashboardMembership? _membershipFromRow(Map<String, dynamic>? row) {

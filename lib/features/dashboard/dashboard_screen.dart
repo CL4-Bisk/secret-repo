@@ -31,7 +31,15 @@ class DashboardScreen extends ConsumerWidget {
       ),
       body: SafeArea(
         child: summary.when(
-          data: (value) => _DashboardContent(summary: value),
+          data: (value) => _DashboardContent(
+            summary: value,
+            onCreateOwnerApartment: (name) async {
+              await ref
+                  .read(dashboardRepositoryProvider)
+                  .createOwnerApartment(name: name);
+              ref.invalidate(dashboardSummaryProvider);
+            },
+          ),
           error: (error, _) => _DashboardError(
             message: error.toString(),
             colorScheme: colorScheme,
@@ -44,9 +52,13 @@ class DashboardScreen extends ConsumerWidget {
 }
 
 class _DashboardContent extends StatelessWidget {
-  const _DashboardContent({required this.summary});
+  const _DashboardContent({
+    required this.summary,
+    required this.onCreateOwnerApartment,
+  });
 
   final DashboardSummary summary;
+  final Future<void> Function(String name) onCreateOwnerApartment;
 
   @override
   Widget build(BuildContext context) {
@@ -77,6 +89,12 @@ class _DashboardContent extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 24),
+                  if (summary.membership == null) ...[
+                    _OwnerOnboardingCard(
+                      onCreateApartment: onCreateOwnerApartment,
+                    ),
+                    const SizedBox(height: 24),
+                  ],
                   Wrap(
                     spacing: 16,
                     runSpacing: 16,
@@ -105,6 +123,143 @@ class _DashboardContent extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _OwnerOnboardingCard extends StatefulWidget {
+  const _OwnerOnboardingCard({required this.onCreateApartment});
+
+  final Future<void> Function(String name) onCreateApartment;
+
+  @override
+  State<_OwnerOnboardingCard> createState() => _OwnerOnboardingCardState();
+}
+
+class _OwnerOnboardingCardState extends State<_OwnerOnboardingCard> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  var _isSubmitting = false;
+  String? _errorMessage;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final isValid = _formKey.currentState?.validate() ?? false;
+    if (!isValid || _isSubmitting) {
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await widget.onCreateApartment(_nameController.text);
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Apartment created.')));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _errorMessage = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.primaryContainer,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Create your apartment',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'This makes you the owner and unlocks dues setup for boarders.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onPrimaryContainer,
+                ),
+              ),
+              const SizedBox(height: 20),
+              TextFormField(
+                key: const Key('owner-onboarding-apartment-name-field'),
+                controller: _nameController,
+                enabled: !_isSubmitting,
+                decoration: const InputDecoration(
+                  labelText: 'Apartment name',
+                  hintText: 'Example: My Apartment',
+                  border: OutlineInputBorder(),
+                ),
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) => _submit(),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Enter the apartment name.';
+                  }
+
+                  return null;
+                },
+              ),
+              if (_errorMessage != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _errorMessage!,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: colorScheme.error),
+                ),
+              ],
+              const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton(
+                  key: const Key('owner-onboarding-submit-button'),
+                  onPressed: _isSubmitting ? null : _submit,
+                  child: _isSubmitting
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Create apartment'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
