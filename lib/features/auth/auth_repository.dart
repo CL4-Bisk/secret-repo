@@ -14,6 +14,8 @@ class AuthRepository {
 
   final SupabaseClient _client;
 
+  bool get isSignedIn => _client.auth.currentSession != null;
+
   String? get currentUserEmail => _client.auth.currentUser?.email;
 
   Future<void> signIn({required String email, required String password}) async {

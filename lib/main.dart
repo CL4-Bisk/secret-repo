@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'core/config/supabase_config.dart';
+import 'features/auth/auth_repository.dart';
 import 'features/auth/auth_screen.dart';
 import 'features/dashboard/dashboard_screen.dart';
 
@@ -18,8 +19,29 @@ Future<void> main() async {
   runApp(const MyApp());
 }
 
-final _routerProvider = Provider<GoRouter>((ref) {
+final _routerProvider = Provider.family<GoRouter, String>((
+  ref,
+  initialLocation,
+) {
+  final authRepository = ref.watch(authRepositoryProvider);
+
   return GoRouter(
+    initialLocation: initialLocation,
+    redirect: (context, state) {
+      final path = state.uri.path;
+      final isAuthRoute = path == '/sign-in' || path == '/sign-up';
+      final isProtectedRoute = path == '/dashboard';
+
+      if (!authRepository.isSignedIn && isProtectedRoute) {
+        return '/sign-in';
+      }
+
+      if (authRepository.isSignedIn && isAuthRoute) {
+        return '/dashboard';
+      }
+
+      return null;
+    },
     routes: [
       GoRoute(path: '/', builder: (context, state) => const LandingScreen()),
       GoRoute(
@@ -39,20 +61,26 @@ final _routerProvider = Provider<GoRouter>((ref) {
 });
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  const MyApp({super.key, this.initialLocation = '/'});
+
+  final String initialLocation;
 
   @override
   Widget build(BuildContext context) {
-    return const ProviderScope(child: _ApartmentApp());
+    return ProviderScope(
+      child: _ApartmentApp(initialLocation: initialLocation),
+    );
   }
 }
 
 class _ApartmentApp extends ConsumerWidget {
-  const _ApartmentApp();
+  const _ApartmentApp({required this.initialLocation});
+
+  final String initialLocation;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final router = ref.watch(_routerProvider);
+    final router = ref.watch(_routerProvider(initialLocation));
 
     return MaterialApp.router(
       title: 'Apartment Manager',
