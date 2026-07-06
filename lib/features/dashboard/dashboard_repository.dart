@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -21,10 +23,15 @@ abstract interface class DashboardRepositoryContract {
   Future<DashboardSummary> fetchSummary();
 
   Future<void> createOwnerApartment({required String name});
+
+  Future<String> createOwnerInvite();
+
+  Future<void> joinWithInviteCode({required String code});
 }
 
 class DashboardRepository implements DashboardRepositoryContract {
   static const membershipUserIdColumn = 'user_id';
+  static const _inviteAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
   const DashboardRepository({
     required this.client,
@@ -95,6 +102,69 @@ class DashboardRepository implements DashboardRepositoryContract {
         );
   }
 
+  @override
+  Future<String> createOwnerInvite() async {
+    final userId = authRepository.currentUserId;
+    if (userId == null) {
+      throw StateError('You must be signed in to create an invite.');
+    }
+
+    await _ensureCurrentUserProfile(userId: userId);
+
+    final organizationId = await _currentOwnerOrganizationId(userId: userId);
+    final code = generateInviteCode();
+    final expiresAt = DateTime.now().toUtc().add(const Duration(days: 7));
+
+    await client
+        .from('organization_invites')
+        .insert(
+          ownerInviteInsert(
+            organizationId: organizationId,
+            userId: userId,
+            code: code,
+            expiresAt: expiresAt,
+          ),
+        );
+
+    return code;
+  }
+
+  @override
+  Future<void> joinWithInviteCode({required String code}) async {
+    final userId = authRepository.currentUserId;
+    if (userId == null) {
+      throw StateError('You must be signed in to join an apartment.');
+    }
+
+    final normalizedCode = normalizeInviteCode(code);
+    if (normalizedCode.length != 9) {
+      throw ArgumentError.value(code, 'code', 'Enter a complete invite code.');
+    }
+
+    await _ensureCurrentUserProfile(userId: userId);
+    await client.rpc(
+      'join_organization_with_invite',
+      params: joinInviteRpcParams(normalizedCode),
+    );
+  }
+
+  Future<String> _currentOwnerOrganizationId({required String userId}) async {
+    final membership = await client
+        .from('memberships')
+        .select('organization_id')
+        .eq(membershipUserIdColumn, userId)
+        .eq('role', 'owner')
+        .limit(1)
+        .maybeSingle();
+    final organizationId = _readString(membership, 'organization_id');
+
+    if (organizationId == null) {
+      throw StateError('Create an apartment before inviting boarders.');
+    }
+
+    return organizationId;
+  }
+
   Future<void> _ensureCurrentUserProfile({required String userId}) async {
     final profile = await client
         .from('profiles')
@@ -128,6 +198,52 @@ class DashboardRepository implements DashboardRepositoryContract {
           ? 'New user'
           : trimmedName,
     };
+  }
+
+  static String generateInviteCode([Random? random]) {
+    final source = random ?? Random.secure();
+
+    String segment() {
+      return String.fromCharCodes(
+        List.generate(4, (_) {
+          final index = source.nextInt(_inviteAlphabet.length);
+          return _inviteAlphabet.codeUnitAt(index);
+        }),
+      );
+    }
+
+    return '${segment()}-${segment()}';
+  }
+
+  static String normalizeInviteCode(String code) {
+    final compactCode = code.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    final limitedCode = compactCode.length > 8
+        ? compactCode.substring(0, 8)
+        : compactCode;
+
+    if (limitedCode.length <= 4) {
+      return limitedCode;
+    }
+
+    return '${limitedCode.substring(0, 4)}-${limitedCode.substring(4)}';
+  }
+
+  static Map<String, Object> ownerInviteInsert({
+    required String organizationId,
+    required String userId,
+    required String code,
+    required DateTime expiresAt,
+  }) {
+    return {
+      'organization_id': organizationId,
+      'created_by': userId,
+      'code': normalizeInviteCode(code),
+      'expires_at': expiresAt.toUtc().toIso8601String(),
+    };
+  }
+
+  static Map<String, Object> joinInviteRpcParams(String code) {
+    return {'invite_code': normalizeInviteCode(code)};
   }
 
   static Map<String, Object> ownerOrganizationInsert({

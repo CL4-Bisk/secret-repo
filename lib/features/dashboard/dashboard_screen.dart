@@ -39,6 +39,15 @@ class DashboardScreen extends ConsumerWidget {
                   .createOwnerApartment(name: name);
               ref.invalidate(dashboardSummaryProvider);
             },
+            onCreateOwnerInvite: () {
+              return ref.read(dashboardRepositoryProvider).createOwnerInvite();
+            },
+            onJoinWithInviteCode: (code) async {
+              await ref
+                  .read(dashboardRepositoryProvider)
+                  .joinWithInviteCode(code: code);
+              ref.invalidate(dashboardSummaryProvider);
+            },
           ),
           error: (error, _) => _DashboardError(
             message: error.toString(),
@@ -55,10 +64,14 @@ class _DashboardContent extends StatelessWidget {
   const _DashboardContent({
     required this.summary,
     required this.onCreateOwnerApartment,
+    required this.onCreateOwnerInvite,
+    required this.onJoinWithInviteCode,
   });
 
   final DashboardSummary summary;
   final Future<void> Function(String name) onCreateOwnerApartment;
+  final Future<String> Function() onCreateOwnerInvite;
+  final Future<void> Function(String code) onJoinWithInviteCode;
 
   @override
   Widget build(BuildContext context) {
@@ -94,6 +107,14 @@ class _DashboardContent extends StatelessWidget {
                       onCreateApartment: onCreateOwnerApartment,
                     ),
                     const SizedBox(height: 24),
+                    _BoarderJoinCard(
+                      onJoinWithInviteCode: onJoinWithInviteCode,
+                    ),
+                    const SizedBox(height: 24),
+                  ],
+                  if (summary.membership?.isOwner == true) ...[
+                    _OwnerInviteCard(onCreateInvite: onCreateOwnerInvite),
+                    const SizedBox(height: 24),
                   ],
                   Wrap(
                     spacing: 16,
@@ -123,6 +144,123 @@ class _DashboardContent extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _OwnerInviteCard extends StatefulWidget {
+  const _OwnerInviteCard({required this.onCreateInvite});
+
+  final Future<String> Function() onCreateInvite;
+
+  @override
+  State<_OwnerInviteCard> createState() => _OwnerInviteCardState();
+}
+
+class _OwnerInviteCardState extends State<_OwnerInviteCard> {
+  var _isSubmitting = false;
+  String? _inviteCode;
+  String? _errorMessage;
+
+  Future<void> _createInvite() async {
+    if (_isSubmitting) {
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final inviteCode = await widget.onCreateInvite();
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _inviteCode = inviteCode;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _errorMessage = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.secondaryContainer,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Invite boarders',
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Generate a code, send it to a boarder, and they can join this apartment from their dashboard.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSecondaryContainer,
+              ),
+            ),
+            if (_inviteCode != null) ...[
+              const SizedBox(height: 16),
+              SelectableText(
+                _inviteCode!,
+                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                  color: colorScheme.onSecondaryContainer,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.6,
+                ),
+              ),
+            ],
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _errorMessage!,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: colorScheme.error),
+              ),
+            ],
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton(
+                key: const Key('owner-invite-create-button'),
+                onPressed: _isSubmitting ? null : _createInvite,
+                child: _isSubmitting
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Create invite code'),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -254,6 +392,146 @@ class _OwnerOnboardingCardState extends State<_OwnerOnboardingCard> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Text('Create apartment'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BoarderJoinCard extends StatefulWidget {
+  const _BoarderJoinCard({required this.onJoinWithInviteCode});
+
+  final Future<void> Function(String code) onJoinWithInviteCode;
+
+  @override
+  State<_BoarderJoinCard> createState() => _BoarderJoinCardState();
+}
+
+class _BoarderJoinCardState extends State<_BoarderJoinCard> {
+  final _formKey = GlobalKey<FormState>();
+  final _codeController = TextEditingController();
+  var _isSubmitting = false;
+  String? _errorMessage;
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final isValid = _formKey.currentState?.validate() ?? false;
+    if (!isValid || _isSubmitting) {
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await widget.onJoinWithInviteCode(_codeController.text);
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Apartment joined.')));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _errorMessage = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.tertiaryContainer,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Join an apartment',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Use the invite code from your owner to join as a boarder.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onTertiaryContainer,
+                ),
+              ),
+              const SizedBox(height: 20),
+              TextFormField(
+                key: const Key('boarder-join-invite-code-field'),
+                controller: _codeController,
+                enabled: !_isSubmitting,
+                decoration: const InputDecoration(
+                  labelText: 'Invite code',
+                  hintText: 'Example: CL4B-9X2A',
+                  border: OutlineInputBorder(),
+                ),
+                textCapitalization: TextCapitalization.characters,
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) => _submit(),
+                validator: (value) {
+                  final normalizedCode =
+                      DashboardRepository.normalizeInviteCode(value ?? '');
+                  if (normalizedCode.length != 9) {
+                    return 'Enter the full invite code.';
+                  }
+
+                  return null;
+                },
+              ),
+              if (_errorMessage != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _errorMessage!,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: colorScheme.error),
+                ),
+              ],
+              const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton(
+                  key: const Key('boarder-join-submit-button'),
+                  onPressed: _isSubmitting ? null : _submit,
+                  child: _isSubmitting
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Join apartment'),
                 ),
               ),
             ],
