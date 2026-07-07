@@ -62,11 +62,20 @@ class DashboardRepository implements DashboardRepositoryContract {
         .eq(membershipUserIdColumn, userId)
         .limit(1)
         .maybeSingle();
+    final activeMembership = _membershipFromRow(membership);
+    final boarders =
+        activeMembership?.isOwner == true &&
+            activeMembership?.organizationId != null
+        ? await _fetchBoarders(
+            organizationId: activeMembership!.organizationId!,
+          )
+        : const <DashboardBoarder>[];
 
     return DashboardSummary(
       displayName: _readString(profile, 'full_name') ?? email,
       email: email,
-      membership: _membershipFromRow(membership),
+      membership: activeMembership,
+      boarders: boarders,
     );
   }
 
@@ -163,6 +172,21 @@ class DashboardRepository implements DashboardRepositoryContract {
     }
 
     return organizationId;
+  }
+
+  Future<List<DashboardBoarder>> _fetchBoarders({
+    required String organizationId,
+  }) async {
+    final rows = await client
+        .from('memberships')
+        .select(
+          'id, organization_id, user_id, created_at, profiles(full_name, phone)',
+        )
+        .eq('organization_id', organizationId)
+        .eq('role', 'boarder')
+        .order('created_at', ascending: true);
+
+    return [for (final row in rows) boarderFromRow(row)];
   }
 
   Future<void> _ensureCurrentUserProfile({required String userId}) async {
@@ -264,36 +288,50 @@ class DashboardRepository implements DashboardRepositoryContract {
     };
   }
 
+  static DashboardBoarder boarderFromRow(Map<String, dynamic> row) {
+    final profile = _embeddedMapFromValue(row['profiles']);
+    final userId = _readString(row, membershipUserIdColumn) ?? 'Unknown user';
+
+    return DashboardBoarder(
+      membershipId: _readString(row, 'id') ?? '',
+      userId: userId,
+      displayName: _readString(profile, 'full_name') ?? userId,
+      phone: _readString(profile, 'phone'),
+    );
+  }
+
   DashboardMembership? _membershipFromRow(Map<String, dynamic>? row) {
     if (row == null) {
       return null;
     }
 
-    final organization = row['organizations'];
+    final organization = _embeddedMapFromValue(row['organizations']);
 
     return DashboardMembership(
       role: _readString(row, 'role') ?? 'boarder',
-      organizationName:
-          _organizationNameFromValue(organization) ?? 'Apartment record',
+      organizationId:
+          _readString(row, 'organization_id') ??
+          _readString(organization, 'id'),
+      organizationName: _readString(organization, 'name') ?? 'Apartment record',
     );
   }
 
-  String? _organizationNameFromValue(Object? value) {
+  static Map<String, dynamic>? _embeddedMapFromValue(Object? value) {
     if (value is Map<String, dynamic>) {
-      return _readString(value, 'name');
+      return value;
     }
 
     if (value is List && value.isNotEmpty) {
       final firstValue = value.first;
       if (firstValue is Map<String, dynamic>) {
-        return _readString(firstValue, 'name');
+        return firstValue;
       }
     }
 
     return null;
   }
 
-  String? _readString(Map<String, dynamic>? row, String key) {
+  static String? _readString(Map<String, dynamic>? row, String key) {
     final value = row?[key];
     if (value is! String) {
       return null;
@@ -309,11 +347,13 @@ class DashboardSummary {
     required this.displayName,
     required this.email,
     this.membership,
+    this.boarders = const [],
   });
 
   final String displayName;
   final String email;
   final DashboardMembership? membership;
+  final List<DashboardBoarder> boarders;
 
   String get primaryIdentityLabel =>
       displayName.isNotEmpty ? displayName : email;
@@ -349,14 +389,33 @@ class DashboardMembership {
   const DashboardMembership({
     required this.role,
     required this.organizationName,
+    this.organizationId,
   });
 
   final String role;
   final String organizationName;
+  final String? organizationId;
 
   bool get isOwner => role.toLowerCase() == 'owner';
 
   String get roleLabel => isOwner ? 'Owner' : 'Boarder';
 
   IconData get roleIcon => isOwner ? Icons.apartment : Icons.person_outline;
+}
+
+class DashboardBoarder {
+  const DashboardBoarder({
+    required this.membershipId,
+    required this.userId,
+    required this.displayName,
+    this.phone,
+  });
+
+  final String membershipId;
+  final String userId;
+  final String displayName;
+  final String? phone;
+
+  String get phoneLabel =>
+      phone?.trim().isNotEmpty == true ? phone!.trim() : 'No phone yet';
 }

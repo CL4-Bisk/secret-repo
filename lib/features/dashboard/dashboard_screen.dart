@@ -115,6 +115,8 @@ class _DashboardContent extends StatelessWidget {
                   if (summary.membership?.isOwner == true) ...[
                     _OwnerInviteCard(onCreateInvite: onCreateOwnerInvite),
                     const SizedBox(height: 24),
+                    _OwnerBoardersCard(boarders: summary.boarders),
+                    const SizedBox(height: 24),
                   ],
                   Wrap(
                     spacing: 16,
@@ -261,6 +263,107 @@ class _OwnerInviteCardState extends State<_OwnerInviteCard> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _OwnerBoardersCard extends StatelessWidget {
+  const _OwnerBoardersCard({required this.boarders});
+
+  final List<DashboardBoarder> boarders;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final count = boarders.length;
+    final countLabel = count == 1
+        ? '1 boarder in this apartment'
+        : '$count boarders in this apartment';
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.surfaceContainerHighest,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Boarders',
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              count == 0
+                  ? 'No boarders have joined this apartment yet.'
+                  : countLabel,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            if (boarders.isEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Create an invite code and send it to a boarder before assigning dues.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ] else ...[
+              const SizedBox(height: 16),
+              for (final boarder in boarders) ...[
+                _BoarderListTile(boarder: boarder),
+                if (boarder != boarders.last) const Divider(height: 24),
+              ],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BoarderListTile extends StatelessWidget {
+  const _BoarderListTile({required this.boarder});
+
+  final DashboardBoarder boarder;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Row(
+      children: [
+        CircleAvatar(
+          backgroundColor: colorScheme.primaryContainer,
+          foregroundColor: colorScheme.onPrimaryContainer,
+          child: const Icon(Icons.person_outline),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                boarder.displayName,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                boarder.phoneLabel,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
