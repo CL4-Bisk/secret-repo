@@ -103,12 +103,12 @@ class _DashboardContent extends StatelessWidget {
                   ),
                   const SizedBox(height: 24),
                   if (summary.membership == null) ...[
-                    _OwnerOnboardingCard(
-                      onCreateApartment: onCreateOwnerApartment,
-                    ),
-                    const SizedBox(height: 24),
                     _BoarderJoinCard(
                       onJoinWithInviteCode: onJoinWithInviteCode,
+                    ),
+                    const SizedBox(height: 24),
+                    _OwnerSetupToggle(
+                      onCreateApartment: onCreateOwnerApartment,
                     ),
                     const SizedBox(height: 24),
                   ],
@@ -256,6 +256,64 @@ class _OwnerInviteCardState extends State<_OwnerInviteCard> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Text('Create invite code'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OwnerSetupToggle extends StatefulWidget {
+  const _OwnerSetupToggle({required this.onCreateApartment});
+
+  final Future<void> Function(String name) onCreateApartment;
+
+  @override
+  State<_OwnerSetupToggle> createState() => _OwnerSetupToggleState();
+}
+
+class _OwnerSetupToggleState extends State<_OwnerSetupToggle> {
+  var _isExpanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    if (_isExpanded) {
+      return _OwnerOnboardingCard(onCreateApartment: widget.onCreateApartment);
+    }
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.surfaceContainerHighest,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Owner setup',
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Only use this if you manage the apartment. Boarders should join with an invite code above.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton(
+                key: const Key('owner-setup-show-button'),
+                onPressed: () => setState(() => _isExpanded = true),
+                child: const Text('Show owner setup'),
               ),
             ),
           ],

@@ -338,7 +338,7 @@ class DashboardSummary {
 
   String get apartmentDescription {
     if (membership == null) {
-      return 'Start owner onboarding to create the apartment record.';
+      return 'Join with an invite code or open owner setup if you manage the apartment.';
     }
 
     return 'This is the apartment connected to your account.';
