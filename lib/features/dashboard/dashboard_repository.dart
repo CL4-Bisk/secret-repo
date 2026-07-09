@@ -27,6 +27,13 @@ abstract interface class DashboardRepositoryContract {
   Future<String> createOwnerInvite();
 
   Future<void> joinWithInviteCode({required String code});
+
+  Future<void> createDue({
+    required String boarderUserId,
+    required String title,
+    required int amountCentavos,
+    required DateTime dueDate,
+  });
 }
 
 class DashboardRepository implements DashboardRepositoryContract {
@@ -70,12 +77,19 @@ class DashboardRepository implements DashboardRepositoryContract {
             organizationId: activeMembership!.organizationId!,
           )
         : const <DashboardBoarder>[];
+    final dues = activeMembership?.organizationId != null
+        ? await _fetchDues(
+            organizationId: activeMembership!.organizationId!,
+            boarderUserId: activeMembership.isOwner ? null : userId,
+          )
+        : const <DashboardDue>[];
 
     return DashboardSummary(
       displayName: _readString(profile, 'full_name') ?? email,
       email: email,
       membership: activeMembership,
       boarders: boarders,
+      dues: dues,
     );
   }
 
@@ -157,6 +171,47 @@ class DashboardRepository implements DashboardRepositoryContract {
     );
   }
 
+  @override
+  Future<void> createDue({
+    required String boarderUserId,
+    required String title,
+    required int amountCentavos,
+    required DateTime dueDate,
+  }) async {
+    final userId = authRepository.currentUserId;
+    if (userId == null) {
+      throw StateError('You must be signed in to create dues.');
+    }
+
+    final trimmedTitle = title.trim();
+    if (trimmedTitle.isEmpty) {
+      throw ArgumentError.value(title, 'title', 'Due title is required.');
+    }
+
+    if (amountCentavos <= 0) {
+      throw ArgumentError.value(
+        amountCentavos,
+        'amountCentavos',
+        'Due amount must be greater than zero.',
+      );
+    }
+
+    final organizationId = await _currentOwnerOrganizationId(userId: userId);
+
+    await client
+        .from('dues')
+        .insert(
+          ownerDueInsert(
+            organizationId: organizationId,
+            boarderUserId: boarderUserId,
+            createdBy: userId,
+            title: trimmedTitle,
+            amountCentavos: amountCentavos,
+            dueDate: dueDate,
+          ),
+        );
+  }
+
   Future<String> _currentOwnerOrganizationId({required String userId}) async {
     final membership = await client
         .from('memberships')
@@ -187,6 +242,35 @@ class DashboardRepository implements DashboardRepositoryContract {
         .order('created_at', ascending: true);
 
     return [for (final row in rows) boarderFromRow(row)];
+  }
+
+  Future<List<DashboardDue>> _fetchDues({
+    required String organizationId,
+    required String? boarderUserId,
+  }) async {
+    const columns = '''
+id,
+organization_id,
+boarder_user_id,
+title,
+description,
+amount_centavos,
+due_date,
+status,
+profiles!dues_boarder_user_id_fkey(full_name)
+''';
+
+    final baseQuery = client
+        .from('dues')
+        .select(columns)
+        .eq('organization_id', organizationId);
+    final rows = boarderUserId == null
+        ? await baseQuery.order('due_date', ascending: true)
+        : await baseQuery
+              .eq('boarder_user_id', boarderUserId)
+              .order('due_date', ascending: true);
+
+    return [for (final row in rows) dueFromRow(row)];
   }
 
   Future<void> _ensureCurrentUserProfile({required String userId}) async {
@@ -270,6 +354,25 @@ class DashboardRepository implements DashboardRepositoryContract {
     return {'invite_code': normalizeInviteCode(code)};
   }
 
+  static Map<String, Object> ownerDueInsert({
+    required String organizationId,
+    required String boarderUserId,
+    required String createdBy,
+    required String title,
+    required int amountCentavos,
+    required DateTime dueDate,
+  }) {
+    return {
+      'organization_id': organizationId,
+      'boarder_user_id': boarderUserId,
+      'created_by': createdBy,
+      'title': title.trim(),
+      'amount_centavos': amountCentavos,
+      'due_date': _formatDate(dueDate),
+      'status': 'unpaid',
+    };
+  }
+
   static Map<String, Object> ownerOrganizationInsert({
     required String name,
     required String userId,
@@ -297,6 +400,24 @@ class DashboardRepository implements DashboardRepositoryContract {
       userId: userId,
       displayName: _readString(profile, 'full_name') ?? userId,
       phone: _readString(profile, 'phone'),
+    );
+  }
+
+  static DashboardDue dueFromRow(Map<String, dynamic> row) {
+    final profile = _embeddedMapFromValue(row['profiles']);
+    final boarderUserId =
+        _readString(row, 'boarder_user_id') ?? 'Unknown boarder';
+
+    return DashboardDue(
+      id: _readString(row, 'id') ?? '',
+      organizationId: _readString(row, 'organization_id') ?? '',
+      boarderUserId: boarderUserId,
+      boarderName: _readString(profile, 'full_name') ?? boarderUserId,
+      title: _readString(row, 'title') ?? 'Untitled due',
+      description: _readString(row, 'description'),
+      amountCentavos: _readInt(row, 'amount_centavos') ?? 0,
+      dueDate: _readDate(row, 'due_date') ?? DateTime.utc(1970),
+      status: _readString(row, 'status') ?? 'unpaid',
     );
   }
 
@@ -340,6 +461,51 @@ class DashboardRepository implements DashboardRepositoryContract {
     final trimmedValue = value.trim();
     return trimmedValue.isEmpty ? null : trimmedValue;
   }
+
+  static int? _readInt(Map<String, dynamic>? row, String key) {
+    final value = row?[key];
+    if (value is int) {
+      return value;
+    }
+
+    if (value is num) {
+      return value.toInt();
+    }
+
+    if (value is String) {
+      return int.tryParse(value);
+    }
+
+    return null;
+  }
+
+  static DateTime? _readDate(Map<String, dynamic>? row, String key) {
+    final value = row?[key];
+    if (value is DateTime) {
+      return DateTime.utc(value.year, value.month, value.day);
+    }
+
+    if (value is String) {
+      final parsed = DateTime.tryParse(value);
+      if (parsed == null) {
+        return null;
+      }
+
+      return DateTime.utc(parsed.year, parsed.month, parsed.day);
+    }
+
+    return null;
+  }
+
+  static String _formatDate(DateTime date) {
+    final normalized = DateTime.utc(date.year, date.month, date.day);
+
+    return [
+      normalized.year.toString().padLeft(4, '0'),
+      normalized.month.toString().padLeft(2, '0'),
+      normalized.day.toString().padLeft(2, '0'),
+    ].join('-');
+  }
 }
 
 class DashboardSummary {
@@ -348,12 +514,14 @@ class DashboardSummary {
     required this.email,
     this.membership,
     this.boarders = const [],
+    this.dues = const [],
   });
 
   final String displayName;
   final String email;
   final DashboardMembership? membership;
   final List<DashboardBoarder> boarders;
+  final List<DashboardDue> dues;
 
   String get primaryIdentityLabel =>
       displayName.isNotEmpty ? displayName : email;
@@ -418,4 +586,64 @@ class DashboardBoarder {
 
   String get phoneLabel =>
       phone?.trim().isNotEmpty == true ? phone!.trim() : 'No phone yet';
+}
+
+class DashboardDue {
+  const DashboardDue({
+    required this.id,
+    required this.organizationId,
+    required this.boarderUserId,
+    required this.boarderName,
+    required this.title,
+    required this.amountCentavos,
+    required this.dueDate,
+    required this.status,
+    this.description,
+  });
+
+  final String id;
+  final String organizationId;
+  final String boarderUserId;
+  final String boarderName;
+  final String title;
+  final String? description;
+  final int amountCentavos;
+  final DateTime dueDate;
+  final String status;
+
+  String get amountLabel {
+    final pesos = amountCentavos ~/ 100;
+    final centavos = amountCentavos % 100;
+
+    return 'P${_formatThousands(pesos)}.${centavos.toString().padLeft(2, '0')}';
+  }
+
+  String get dueDateLabel => [
+    dueDate.year.toString().padLeft(4, '0'),
+    dueDate.month.toString().padLeft(2, '0'),
+    dueDate.day.toString().padLeft(2, '0'),
+  ].join('-');
+
+  String get statusLabel {
+    return switch (status.toLowerCase()) {
+      'unpaid' => 'Unpaid',
+      'proof_submitted' => 'Proof submitted',
+      'paid' => 'Paid',
+      'rejected' => 'Rejected',
+      _ => status,
+    };
+  }
+
+  static String _formatThousands(int value) {
+    final source = value.toString();
+    final reversedCharacters = source.split('').reversed.toList();
+    final chunks = <String>[];
+
+    for (var index = 0; index < reversedCharacters.length; index += 3) {
+      final end = min(index + 3, reversedCharacters.length);
+      chunks.add(reversedCharacters.sublist(index, end).reversed.join());
+    }
+
+    return chunks.reversed.join(',');
+  }
 }

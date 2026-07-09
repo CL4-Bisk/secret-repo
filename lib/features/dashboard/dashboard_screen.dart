@@ -48,6 +48,23 @@ class DashboardScreen extends ConsumerWidget {
                   .joinWithInviteCode(code: code);
               ref.invalidate(dashboardSummaryProvider);
             },
+            onCreateDue:
+                ({
+                  required boarderUserId,
+                  required title,
+                  required amountCentavos,
+                  required dueDate,
+                }) async {
+                  await ref
+                      .read(dashboardRepositoryProvider)
+                      .createDue(
+                        boarderUserId: boarderUserId,
+                        title: title,
+                        amountCentavos: amountCentavos,
+                        dueDate: dueDate,
+                      );
+                  ref.invalidate(dashboardSummaryProvider);
+                },
           ),
           error: (error, _) => _DashboardError(
             message: error.toString(),
@@ -66,12 +83,20 @@ class _DashboardContent extends StatelessWidget {
     required this.onCreateOwnerApartment,
     required this.onCreateOwnerInvite,
     required this.onJoinWithInviteCode,
+    required this.onCreateDue,
   });
 
   final DashboardSummary summary;
   final Future<void> Function(String name) onCreateOwnerApartment;
   final Future<String> Function() onCreateOwnerInvite;
   final Future<void> Function(String code) onJoinWithInviteCode;
+  final Future<void> Function({
+    required String boarderUserId,
+    required String title,
+    required int amountCentavos,
+    required DateTime dueDate,
+  })
+  onCreateDue;
 
   @override
   Widget build(BuildContext context) {
@@ -117,6 +142,16 @@ class _DashboardContent extends StatelessWidget {
                     const SizedBox(height: 24),
                     _OwnerBoardersCard(boarders: summary.boarders),
                     const SizedBox(height: 24),
+                    _OwnerDuesCard(
+                      boarders: summary.boarders,
+                      dues: summary.dues,
+                      onCreateDue: onCreateDue,
+                    ),
+                    const SizedBox(height: 24),
+                  ],
+                  if (summary.membership?.isOwner == false) ...[
+                    _BoarderDuesCard(dues: summary.dues),
+                    const SizedBox(height: 24),
                   ],
                   Wrap(
                     spacing: 16,
@@ -146,6 +181,429 @@ class _DashboardContent extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _OwnerDuesCard extends StatefulWidget {
+  const _OwnerDuesCard({
+    required this.boarders,
+    required this.dues,
+    required this.onCreateDue,
+  });
+
+  final List<DashboardBoarder> boarders;
+  final List<DashboardDue> dues;
+  final Future<void> Function({
+    required String boarderUserId,
+    required String title,
+    required int amountCentavos,
+    required DateTime dueDate,
+  })
+  onCreateDue;
+
+  @override
+  State<_OwnerDuesCard> createState() => _OwnerDuesCardState();
+}
+
+class _OwnerDuesCardState extends State<_OwnerDuesCard> {
+  final _formKey = GlobalKey<FormState>();
+  final _titleController = TextEditingController();
+  final _amountController = TextEditingController();
+  final _dueDateController = TextEditingController();
+  String? _selectedBoarderUserId;
+  String? _errorMessage;
+  var _isSubmitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedBoarderUserId = widget.boarders.firstOrNull?.userId;
+  }
+
+  @override
+  void didUpdateWidget(covariant _OwnerDuesCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final selectedUserStillExists = widget.boarders.any(
+      (boarder) => boarder.userId == _selectedBoarderUserId,
+    );
+    if (!selectedUserStillExists) {
+      _selectedBoarderUserId = widget.boarders.firstOrNull?.userId;
+    }
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _amountController.dispose();
+    _dueDateController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final isValid = _formKey.currentState?.validate() ?? false;
+    final boarderUserId = _selectedBoarderUserId;
+    final amountCentavos = _parsePesoAmountToCentavos(_amountController.text);
+    final dueDate = _parseDueDate(_dueDateController.text);
+
+    if (!isValid ||
+        _isSubmitting ||
+        boarderUserId == null ||
+        amountCentavos == null ||
+        dueDate == null) {
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await widget.onCreateDue(
+        boarderUserId: boarderUserId,
+        title: _titleController.text,
+        amountCentavos: amountCentavos,
+        dueDate: dueDate,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      _titleController.clear();
+      _amountController.clear();
+      _dueDateController.clear();
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Due created.')));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _errorMessage = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.primaryContainer,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Create due',
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Assign rent, utilities, or other dues to a boarder.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onPrimaryContainer,
+              ),
+            ),
+            const SizedBox(height: 20),
+            if (widget.boarders.isEmpty)
+              Text(
+                'Invite a boarder before creating dues.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onPrimaryContainer,
+                ),
+              )
+            else
+              Form(
+                key: _formKey,
+                child: Column(
+                  children: [
+                    DropdownButtonFormField<String>(
+                      key: const Key('owner-due-boarder-field'),
+                      initialValue: _selectedBoarderUserId,
+                      decoration: const InputDecoration(
+                        labelText: 'Boarder',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        for (final boarder in widget.boarders)
+                          DropdownMenuItem(
+                            value: boarder.userId,
+                            child: Text(boarder.displayName),
+                          ),
+                      ],
+                      onChanged: _isSubmitting
+                          ? null
+                          : (value) =>
+                                setState(() => _selectedBoarderUserId = value),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      key: const Key('owner-due-title-field'),
+                      controller: _titleController,
+                      decoration: const InputDecoration(
+                        labelText: 'Due title',
+                        hintText: 'Example: July rent',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Enter a due title.';
+                        }
+
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      key: const Key('owner-due-amount-field'),
+                      controller: _amountController,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'Amount',
+                        hintText: 'Example: 1500',
+                        prefixText: 'P ',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) {
+                        if (_parsePesoAmountToCentavos(value ?? '') == null) {
+                          return 'Enter a valid peso amount.';
+                        }
+
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      key: const Key('owner-due-date-field'),
+                      controller: _dueDateController,
+                      decoration: const InputDecoration(
+                        labelText: 'Due date',
+                        hintText: 'YYYY-MM-DD',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) {
+                        if (_parseDueDate(value ?? '') == null) {
+                          return 'Enter a valid date like 2026-07-31.';
+                        }
+
+                        return null;
+                      },
+                    ),
+                    if (_errorMessage != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        _errorMessage!,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: colorScheme.error,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton(
+                        key: const Key('owner-due-submit-button'),
+                        onPressed: _isSubmitting ? null : _submit,
+                        child: _isSubmitting
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('Save due'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 24),
+            _DueList(
+              dues: widget.dues,
+              emptyMessage: 'No dues have been created yet.',
+              showBoarderName: true,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BoarderDuesCard extends StatelessWidget {
+  const _BoarderDuesCard({required this.dues});
+
+  final List<DashboardDue> dues;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.secondaryContainer,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'My dues',
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'These are the dues assigned to your account.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSecondaryContainer,
+              ),
+            ),
+            const SizedBox(height: 16),
+            _DueList(
+              dues: dues,
+              emptyMessage: 'No dues assigned yet.',
+              showBoarderName: false,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DueList extends StatelessWidget {
+  const _DueList({
+    required this.dues,
+    required this.emptyMessage,
+    required this.showBoarderName,
+  });
+
+  final List<DashboardDue> dues;
+  final String emptyMessage;
+  final bool showBoarderName;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    if (dues.isEmpty) {
+      return Text(
+        emptyMessage,
+        style: Theme.of(
+          context,
+        ).textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+      );
+    }
+
+    return Column(
+      children: [
+        for (final due in dues) ...[
+          _DueListTile(due: due, showBoarderName: showBoarderName),
+          if (due != dues.last) const Divider(height: 24),
+        ],
+      ],
+    );
+  }
+}
+
+class _DueListTile extends StatelessWidget {
+  const _DueListTile({required this.due, required this.showBoarderName});
+
+  final DashboardDue due;
+  final bool showBoarderName;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CircleAvatar(
+          backgroundColor: colorScheme.surface,
+          foregroundColor: colorScheme.primary,
+          child: const Icon(Icons.receipt_long_outlined),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                due.title,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              if (showBoarderName) ...[
+                const SizedBox(height: 2),
+                Text(
+                  due.boarderName,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _DueBadge(label: due.amountLabel),
+                  _DueBadge(label: 'Due ${due.dueDateLabel}'),
+                  _DueBadge(label: due.statusLabel),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DueBadge extends StatelessWidget {
+  const _DueBadge({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Text(
+          label,
+          style: Theme.of(
+            context,
+          ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700),
+        ),
+      ),
     );
   }
 }
@@ -800,4 +1258,49 @@ class _DashboardSummaryCard extends StatelessWidget {
       ),
     );
   }
+}
+
+int? _parsePesoAmountToCentavos(String value) {
+  final cleanedValue = value.trim().replaceAll(',', '');
+  final match = RegExp(r'^\d+(\.\d{1,2})?$').firstMatch(cleanedValue);
+  if (match == null) {
+    return null;
+  }
+
+  final parts = cleanedValue.split('.');
+  final pesos = int.tryParse(parts.first);
+  if (pesos == null) {
+    return null;
+  }
+
+  final centavos = parts.length == 2
+      ? int.tryParse(parts.last.padRight(2, '0'))
+      : 0;
+  if (centavos == null) {
+    return null;
+  }
+
+  final amountCentavos = (pesos * 100) + centavos;
+  return amountCentavos > 0 ? amountCentavos : null;
+}
+
+DateTime? _parseDueDate(String value) {
+  final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(value.trim());
+  if (match == null) {
+    return null;
+  }
+
+  final year = int.tryParse(match.group(1)!);
+  final month = int.tryParse(match.group(2)!);
+  final day = int.tryParse(match.group(3)!);
+  if (year == null || month == null || day == null) {
+    return null;
+  }
+
+  final date = DateTime.utc(year, month, day);
+  if (date.year != year || date.month != month || date.day != day) {
+    return null;
+  }
+
+  return date;
 }
