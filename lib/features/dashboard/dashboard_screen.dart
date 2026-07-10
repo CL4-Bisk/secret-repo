@@ -21,6 +21,7 @@ class DashboardScreen extends ConsumerWidget {
           TextButton(
             onPressed: () async {
               await authRepository.signOut();
+              ref.invalidate(dashboardSummaryProvider);
               if (context.mounted) {
                 context.go('/');
               }

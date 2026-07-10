@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -24,9 +26,11 @@ final _routerProvider = Provider.family<GoRouter, String>((
   initialLocation,
 ) {
   final authRepository = ref.watch(authRepositoryProvider);
+  final routerRefresh = ref.watch(_routerRefreshProvider);
 
-  return GoRouter(
+  final router = GoRouter(
     initialLocation: initialLocation,
+    refreshListenable: routerRefresh,
     redirect: (context, state) {
       final path = state.uri.path;
       final isAuthRoute = path == '/sign-in' || path == '/sign-up';
@@ -58,7 +62,34 @@ final _routerProvider = Provider.family<GoRouter, String>((
       ),
     ],
   );
+
+  ref.onDispose(router.dispose);
+
+  return router;
 });
+
+final _routerRefreshProvider = Provider<_AuthRouterRefresh>((ref) {
+  final authRepository = ref.watch(authRepositoryProvider);
+  final refresh = _AuthRouterRefresh(authRepository.authStateChanges);
+
+  ref.onDispose(refresh.dispose);
+
+  return refresh;
+});
+
+class _AuthRouterRefresh extends ChangeNotifier {
+  _AuthRouterRefresh(Stream<AuthUserSnapshot?> authStateChanges) {
+    _subscription = authStateChanges.listen((_) => notifyListeners());
+  }
+
+  late final StreamSubscription<AuthUserSnapshot?> _subscription;
+
+  @override
+  void dispose() {
+    _subscription.cancel();
+    super.dispose();
+  }
+}
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key, this.initialLocation = '/'});

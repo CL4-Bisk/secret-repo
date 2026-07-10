@@ -16,6 +16,8 @@ final dashboardRepositoryProvider = Provider<DashboardRepositoryContract>((
 });
 
 final dashboardSummaryProvider = FutureProvider<DashboardSummary>((ref) {
+  ref.watch(authUserChangesProvider);
+
   return ref.watch(dashboardRepositoryProvider).fetchSummary();
 });
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../dashboard/dashboard_repository.dart';
 import 'auth_repository.dart';
 
 class SignInScreen extends StatelessWidget {
@@ -97,6 +98,8 @@ class _AuthScaffoldState extends ConsumerState<AuthScaffold> {
       if (!mounted) {
         return;
       }
+
+      ref.invalidate(dashboardSummaryProvider);
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
