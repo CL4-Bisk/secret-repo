@@ -33,7 +33,7 @@ final _routerProvider = Provider.family<GoRouter, String>((
     refreshListenable: routerRefresh,
     redirect: (context, state) {
       final path = state.uri.path;
-      final isAuthRoute = path == '/sign-in' || path == '/sign-up';
+      final isAuthRoute = path == '/sign-in' || path.startsWith('/sign-up');
       final isProtectedRoute = path == '/dashboard';
 
       if (!authRepository.isSignedIn && isProtectedRoute) {
@@ -54,7 +54,18 @@ final _routerProvider = Provider.family<GoRouter, String>((
       ),
       GoRoute(
         path: '/sign-up',
-        builder: (context, state) => const SignUpScreen(),
+        builder: (context, state) =>
+            const SignUpScreen(intendedRole: AuthIntendedRole.owner),
+      ),
+      GoRoute(
+        path: '/sign-up/owner',
+        builder: (context, state) =>
+            const SignUpScreen(intendedRole: AuthIntendedRole.owner),
+      ),
+      GoRoute(
+        path: '/sign-up/boarder',
+        builder: (context, state) =>
+            const SignUpScreen(intendedRole: AuthIntendedRole.boarder),
       ),
       GoRoute(
         path: '/dashboard',
@@ -197,12 +208,12 @@ class _LandingContent extends StatelessWidget {
           children: [
             FilledButton(
               key: const Key('landing-owner-sign-up-button'),
-              onPressed: () => context.go('/sign-up'),
+              onPressed: () => context.go('/sign-up/owner'),
               child: const Text('Create owner account'),
             ),
             FilledButton.tonal(
               key: const Key('landing-boarder-sign-up-button'),
-              onPressed: () => context.go('/sign-up'),
+              onPressed: () => context.go('/sign-up/boarder'),
               child: const Text('Create boarder account'),
             ),
             OutlinedButton(

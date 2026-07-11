@@ -64,6 +64,7 @@ class DashboardRepository implements DashboardRepositoryContract {
         .select('id, full_name')
         .eq('id', userId)
         .maybeSingle();
+    final intendedRole = authRepository.currentUserIntendedRole;
 
     final membership = await client
         .from('memberships')
@@ -89,6 +90,7 @@ class DashboardRepository implements DashboardRepositoryContract {
     return DashboardSummary(
       displayName: _readString(profile, 'full_name') ?? email,
       email: email,
+      intendedRole: intendedRole,
       membership: activeMembership,
       boarders: boarders,
       dues: dues,
@@ -514,6 +516,7 @@ class DashboardSummary {
   const DashboardSummary({
     required this.displayName,
     required this.email,
+    this.intendedRole,
     this.membership,
     this.boarders = const [],
     this.dues = const [],
@@ -521,6 +524,7 @@ class DashboardSummary {
 
   final String displayName;
   final String email;
+  final AuthIntendedRole? intendedRole;
   final DashboardMembership? membership;
   final List<DashboardBoarder> boarders;
   final List<DashboardDue> dues;
@@ -528,12 +532,29 @@ class DashboardSummary {
   String get primaryIdentityLabel =>
       displayName.isNotEmpty ? displayName : email;
 
-  String get roleLabel => membership?.roleLabel ?? 'Setup needed';
+  String get roleLabel {
+    final activeMembership = membership;
+    if (activeMembership != null) {
+      return activeMembership.roleLabel;
+    }
+
+    return switch (intendedRole) {
+      AuthIntendedRole.owner => 'Owner setup needed',
+      AuthIntendedRole.boarder => 'Boarder setup needed',
+      null => 'Setup needed',
+    };
+  }
 
   String get roleDescription {
     final activeMembership = membership;
     if (activeMembership == null) {
-      return 'Create or join an apartment before tracking dues.';
+      return switch (intendedRole) {
+        AuthIntendedRole.owner =>
+          'Create your apartment before inviting boarders.',
+        AuthIntendedRole.boarder =>
+          'Join your apartment with the owner invite code.',
+        null => 'This account has no saved owner or boarder role.',
+      };
     }
 
     return activeMembership.isOwner
@@ -548,7 +569,14 @@ class DashboardSummary {
 
   String get apartmentDescription {
     if (membership == null) {
-      return 'Join with an invite code or open owner setup if you manage the apartment.';
+      return switch (intendedRole) {
+        AuthIntendedRole.owner =>
+          'Create the apartment record for your account.',
+        AuthIntendedRole.boarder =>
+          'Join with the invite code from your owner.',
+        null =>
+          'Sign out and use the correct signup path, or update this user role metadata.',
+      };
     }
 
     return 'This is the apartment connected to your account.';

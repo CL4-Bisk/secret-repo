@@ -129,11 +129,9 @@ class _DashboardContent extends StatelessWidget {
                   ),
                   const SizedBox(height: 24),
                   if (summary.membership == null) ...[
-                    _BoarderJoinCard(
+                    _PendingSetupSection(
+                      intendedRole: summary.intendedRole,
                       onJoinWithInviteCode: onJoinWithInviteCode,
-                    ),
-                    const SizedBox(height: 24),
-                    _OwnerSetupToggle(
                       onCreateApartment: onCreateOwnerApartment,
                     ),
                     const SizedBox(height: 24),
@@ -182,6 +180,67 @@ class _DashboardContent extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _PendingSetupSection extends StatelessWidget {
+  const _PendingSetupSection({
+    required this.intendedRole,
+    required this.onCreateApartment,
+    required this.onJoinWithInviteCode,
+  });
+
+  final AuthIntendedRole? intendedRole;
+  final Future<void> Function(String name) onCreateApartment;
+  final Future<void> Function(String code) onJoinWithInviteCode;
+
+  @override
+  Widget build(BuildContext context) {
+    return switch (intendedRole) {
+      AuthIntendedRole.owner => _OwnerOnboardingCard(
+        onCreateApartment: onCreateApartment,
+      ),
+      AuthIntendedRole.boarder => _BoarderJoinCard(
+        onJoinWithInviteCode: onJoinWithInviteCode,
+      ),
+      null => const _MissingRoleCard(),
+    };
+  }
+}
+
+class _MissingRoleCard extends StatelessWidget {
+  const _MissingRoleCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.surfaceContainerHighest,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Account role missing',
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'This account was created before owner and boarder signup were separated, so the app cannot safely decide its role. Sign out and create a new owner or boarder account, or update this user metadata in Supabase.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -823,64 +882,6 @@ class _BoarderListTile extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _OwnerSetupToggle extends StatefulWidget {
-  const _OwnerSetupToggle({required this.onCreateApartment});
-
-  final Future<void> Function(String name) onCreateApartment;
-
-  @override
-  State<_OwnerSetupToggle> createState() => _OwnerSetupToggleState();
-}
-
-class _OwnerSetupToggleState extends State<_OwnerSetupToggle> {
-  var _isExpanded = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    if (_isExpanded) {
-      return _OwnerOnboardingCard(onCreateApartment: widget.onCreateApartment);
-    }
-
-    return Card(
-      elevation: 0,
-      color: colorScheme.surfaceContainerHighest,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Owner setup',
-              style: Theme.of(
-                context,
-              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Only use this if you manage the apartment. Boarders should join with an invite code above.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerRight,
-              child: OutlinedButton(
-                key: const Key('owner-setup-show-button'),
-                onPressed: () => setState(() => _isExpanded = true),
-                child: const Text('Show owner setup'),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

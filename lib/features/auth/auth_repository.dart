@@ -18,20 +18,49 @@ final authUserChangesProvider = StreamProvider<AuthUserSnapshot?>((ref) async* {
   yield* repository.authStateChanges;
 });
 
+enum AuthIntendedRole {
+  owner('owner'),
+  boarder('boarder');
+
+  const AuthIntendedRole(this.value);
+
+  final String value;
+
+  static AuthIntendedRole? fromValue(Object? value) {
+    final normalizedValue = value?.toString().trim().toLowerCase();
+
+    for (final role in AuthIntendedRole.values) {
+      if (role.value == normalizedValue) {
+        return role;
+      }
+    }
+
+    return null;
+  }
+}
+
 class AuthUserSnapshot {
-  const AuthUserSnapshot({required this.id, required this.email});
+  const AuthUserSnapshot({
+    required this.id,
+    required this.email,
+    this.intendedRole,
+  });
 
   final String id;
   final String? email;
+  final AuthIntendedRole? intendedRole;
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
-        other is AuthUserSnapshot && other.id == id && other.email == email;
+        other is AuthUserSnapshot &&
+            other.id == id &&
+            other.email == email &&
+            other.intendedRole == intendedRole;
   }
 
   @override
-  int get hashCode => Object.hash(id, email);
+  int get hashCode => Object.hash(id, email, intendedRole);
 }
 
 class AuthRepository {
@@ -45,13 +74,23 @@ class AuthRepository {
 
   String? get currentUserEmail => _client.auth.currentUser?.email;
 
+  AuthIntendedRole? get currentUserIntendedRole {
+    final metadata = _client.auth.currentUser?.userMetadata;
+
+    return AuthIntendedRole.fromValue(metadata?['intended_role']);
+  }
+
   AuthUserSnapshot? get currentUserSnapshot {
     final user = _client.auth.currentUser;
     if (user == null) {
       return null;
     }
 
-    return AuthUserSnapshot(id: user.id, email: user.email);
+    return AuthUserSnapshot(
+      id: user.id,
+      email: user.email,
+      intendedRole: currentUserIntendedRole,
+    );
   }
 
   Stream<AuthUserSnapshot?> get authStateChanges {
@@ -69,15 +108,16 @@ class AuthRepository {
     await _client.auth.signOut();
   }
 
-  Future<void> signUpOwner({
+  Future<void> signUp({
     required String fullName,
     required String email,
     required String password,
+    required AuthIntendedRole intendedRole,
   }) async {
     await _client.auth.signUp(
       email: email.trim(),
       password: password,
-      data: {'full_name': fullName.trim()},
+      data: {'full_name': fullName.trim(), 'intended_role': intendedRole.value},
     );
   }
 }

@@ -20,16 +20,22 @@ class SignInScreen extends StatelessWidget {
 }
 
 class SignUpScreen extends StatelessWidget {
-  const SignUpScreen({super.key});
+  const SignUpScreen({required this.intendedRole, super.key});
+
+  final AuthIntendedRole intendedRole;
 
   @override
   Widget build(BuildContext context) {
-    return const AuthScaffold(
-      title: 'Create account',
-      subtitle:
-          'Owners create an apartment. Boarders join later with an invite code.',
+    final isOwner = intendedRole == AuthIntendedRole.owner;
+
+    return AuthScaffold(
+      title: isOwner ? 'Create owner account' : 'Create boarder account',
+      subtitle: isOwner
+          ? 'Create your login first, then create the apartment record.'
+          : 'Create your login first, then join with the owner invite code.',
       submitLabel: 'Create account',
       mode: AuthFormMode.signUp,
+      intendedRole: intendedRole,
     );
   }
 }
@@ -42,6 +48,7 @@ class AuthScaffold extends ConsumerStatefulWidget {
     required this.subtitle,
     required this.submitLabel,
     required this.mode,
+    this.intendedRole,
     super.key,
   });
 
@@ -49,6 +56,7 @@ class AuthScaffold extends ConsumerStatefulWidget {
   final String subtitle;
   final String submitLabel;
   final AuthFormMode mode;
+  final AuthIntendedRole? intendedRole;
 
   @override
   ConsumerState<AuthScaffold> createState() => _AuthScaffoldState();
@@ -83,10 +91,16 @@ class _AuthScaffoldState extends ConsumerState<AuthScaffold> {
       final repository = ref.read(authRepositoryProvider);
 
       if (_isSignUp) {
-        await repository.signUpOwner(
+        final intendedRole = widget.intendedRole;
+        if (intendedRole == null) {
+          throw StateError('Choose owner or boarder signup first.');
+        }
+
+        await repository.signUp(
           fullName: _fullNameController.text,
           email: _emailController.text,
           password: _passwordController.text,
+          intendedRole: intendedRole,
         );
       } else {
         await repository.signIn(
