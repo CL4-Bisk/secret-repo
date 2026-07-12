@@ -69,25 +69,31 @@ class DashboardScreen extends ConsumerWidget {
                       );
                   ref.invalidate(dashboardSummaryProvider);
                 },
-            onSubmitPaymentProof: (due) async {
-              final file = await paymentProofPicker.pickImageProof();
-              if (file == null) {
-                return false;
-              }
-
-              await ref
-                  .read(dashboardRepositoryProvider)
-                  .submitPaymentProof(due: due, file: file);
-              ref.invalidate(dashboardSummaryProvider);
-              return true;
-            },
+            onPickPaymentProof: paymentProofPicker.pickImageProof,
+            onSubmitPaymentProof:
+                ({
+                  required DashboardDue due,
+                  required PickedPaymentProofFile file,
+                }) async {
+                  await ref
+                      .read(dashboardRepositoryProvider)
+                      .submitPaymentProof(due: due, file: file);
+                  ref.invalidate(dashboardSummaryProvider);
+                },
             onReviewPaymentProof:
-                ({required proofId, required approved}) async {
+                ({
+                  required proofId,
+                  required approved,
+                  rejectionReason,
+                  rejectionNote,
+                }) async {
                   await ref
                       .read(dashboardRepositoryProvider)
                       .reviewPaymentProof(
                         proofId: proofId,
                         approved: approved,
+                        rejectionReason: rejectionReason,
+                        rejectionNote: rejectionNote,
                       );
                   ref.invalidate(dashboardSummaryProvider);
                 },
@@ -111,6 +117,7 @@ class _DashboardContent extends StatelessWidget {
     required this.onJoinWithInviteCode,
     required this.onCreateDue,
     required this.onRefreshBoarders,
+    required this.onPickPaymentProof,
     required this.onSubmitPaymentProof,
     required this.onReviewPaymentProof,
   });
@@ -127,10 +134,17 @@ class _DashboardContent extends StatelessWidget {
     required DateTime dueDate,
   })
   onCreateDue;
-  final Future<bool> Function(DashboardDue due) onSubmitPaymentProof;
+  final Future<PickedPaymentProofFile?> Function() onPickPaymentProof;
+  final Future<void> Function({
+    required DashboardDue due,
+    required PickedPaymentProofFile file,
+  })
+  onSubmitPaymentProof;
   final Future<void> Function({
     required String proofId,
     required bool approved,
+    String? rejectionReason,
+    String? rejectionNote,
   })
   onReviewPaymentProof;
 
@@ -160,6 +174,16 @@ class _DashboardContent extends StatelessWidget {
                     summary.primaryIdentityLabel,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      key: const Key('dashboard-transactions-link'),
+                      onPressed: () => context.go('/transactions'),
+                      icon: const Icon(Icons.history),
+                      label: const Text('View transaction history'),
                     ),
                   ),
                   const SizedBox(height: 24),
@@ -194,6 +218,7 @@ class _DashboardContent extends StatelessWidget {
                   if (summary.membership?.isOwner == false) ...[
                     _BoarderDuesCard(
                       dues: summary.dues,
+                      onPickPaymentProof: onPickPaymentProof,
                       onSubmitPaymentProof: onSubmitPaymentProof,
                     ),
                     const SizedBox(height: 24),
@@ -301,6 +326,8 @@ class _OwnerPaymentProofsCard extends StatefulWidget {
   final Future<void> Function({
     required String proofId,
     required bool approved,
+    String? rejectionReason,
+    String? rejectionNote,
   })
   onReviewPaymentProof;
 
@@ -313,7 +340,12 @@ class _OwnerPaymentProofsCardState extends State<_OwnerPaymentProofsCard> {
   String? _reviewingProofId;
   String? _errorMessage;
 
-  Future<void> _review(DashboardPaymentProof proof, bool approved) async {
+  Future<void> _review(
+    DashboardPaymentProof proof, {
+    required bool approved,
+    String? rejectionReason,
+    String? rejectionNote,
+  }) async {
     if (_reviewingProofId != null) {
       return;
     }
@@ -327,6 +359,8 @@ class _OwnerPaymentProofsCardState extends State<_OwnerPaymentProofsCard> {
       await widget.onReviewPaymentProof(
         proofId: proof.id,
         approved: approved,
+        rejectionReason: rejectionReason,
+        rejectionNote: rejectionNote,
       );
 
       if (!mounted) {
@@ -353,6 +387,20 @@ class _OwnerPaymentProofsCardState extends State<_OwnerPaymentProofsCard> {
         setState(() => _reviewingProofId = null);
       }
     }
+  }
+
+  Future<void> _reject(DashboardPaymentProof proof) async {
+    final rejection = await _showPaymentProofRejectionDialog(context);
+    if (rejection == null) {
+      return;
+    }
+
+    await _review(
+      proof,
+      approved: false,
+      rejectionReason: rejection.reason.code,
+      rejectionNote: rejection.note,
+    );
   }
 
   @override
@@ -410,8 +458,8 @@ class _OwnerPaymentProofsCardState extends State<_OwnerPaymentProofsCard> {
                     _PaymentProofListTile(
                       proof: proof,
                       isReviewing: _reviewingProofId == proof.id,
-                      onApprove: () => _review(proof, true),
-                      onReject: () => _review(proof, false),
+                      onApprove: () => _review(proof, approved: true),
+                      onReject: () => _reject(proof),
                     ),
                     if (proof != widget.paymentProofs.last)
                       const Divider(height: 28),
@@ -508,6 +556,13 @@ class _PaymentProofListTile extends StatelessWidget {
               ),
             ),
           ),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            key: Key('owner-proof-preview-${proof.id}'),
+            onPressed: () => _showPaymentProofPreviewDialog(context, proof),
+            icon: const Icon(Icons.open_in_full),
+            label: const Text('View full screen'),
+          ),
         ],
         if (proof.isPending) ...[
           const SizedBox(height: 12),
@@ -538,6 +593,153 @@ class _PaymentProofListTile extends StatelessWidget {
       ],
     );
   }
+}
+
+class _PaymentProofRejection {
+  const _PaymentProofRejection({
+    required this.reason,
+    required this.note,
+  });
+
+  final PaymentProofRejectionReason reason;
+  final String? note;
+}
+
+Future<_PaymentProofRejection?> _showPaymentProofRejectionDialog(
+  BuildContext context,
+) {
+  return showDialog<_PaymentProofRejection>(
+    context: context,
+    builder: (context) => const _PaymentProofRejectionDialog(),
+  );
+}
+
+class _PaymentProofRejectionDialog extends StatefulWidget {
+  const _PaymentProofRejectionDialog();
+
+  @override
+  State<_PaymentProofRejectionDialog> createState() =>
+      _PaymentProofRejectionDialogState();
+}
+
+class _PaymentProofRejectionDialogState
+    extends State<_PaymentProofRejectionDialog> {
+  final _noteController = TextEditingController();
+  var _selectedReason = PaymentProofRejectionReason.invalidReceipt;
+
+  @override
+  void dispose() {
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final note = _noteController.text.trim();
+    Navigator.of(context).pop(
+      _PaymentProofRejection(
+        reason: _selectedReason,
+        note: note.isEmpty ? null : note,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Reject payment proof'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DropdownButtonFormField<PaymentProofRejectionReason>(
+            key: const Key('proof-rejection-reason-field'),
+            initialValue: _selectedReason,
+            decoration: const InputDecoration(
+              labelText: 'Reason',
+              border: OutlineInputBorder(),
+            ),
+            items: [
+              for (final reason in PaymentProofRejectionReason.values)
+                DropdownMenuItem(
+                  value: reason,
+                  child: Text(reason.label),
+                ),
+            ],
+            onChanged: (reason) {
+              if (reason == null) {
+                return;
+              }
+
+              setState(() => _selectedReason = reason);
+            },
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            key: const Key('proof-rejection-note-field'),
+            controller: _noteController,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: 'Optional note',
+              hintText: 'Example: Receipt date does not match.',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const Key('proof-rejection-submit-button'),
+          onPressed: _submit,
+          child: const Text('Reject proof'),
+        ),
+      ],
+    );
+  }
+}
+
+Future<void> _showPaymentProofPreviewDialog(
+  BuildContext context,
+  DashboardPaymentProof proof,
+) {
+  final signedUrl = proof.signedUrl;
+  if (signedUrl == null) {
+    return Future.value();
+  }
+
+  return showDialog<void>(
+    context: context,
+    builder: (context) {
+      return Dialog.fullscreen(
+        child: Scaffold(
+          appBar: AppBar(
+            title: const Text('Payment proof preview'),
+            actions: [
+              TextButton(
+                key: const Key('proof-preview-close-button'),
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+          body: Center(
+            child: InteractiveViewer(
+              child: Image.network(
+                signedUrl,
+                fit: BoxFit.contain,
+                errorBuilder: (context, _, _) => const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text('Could not preview this proof image.'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
 }
 
 class _OwnerDuesCard extends StatefulWidget {
@@ -801,14 +1003,90 @@ class _OwnerDuesCardState extends State<_OwnerDuesCard> {
   }
 }
 
+enum _BoarderProofPreviewAction { chooseAnother, submit }
+
+Future<_BoarderProofPreviewAction?> _showBoarderProofPreviewDialog({
+  required BuildContext context,
+  required String fileName,
+  required PreparedPaymentProofImage preparedImage,
+}) {
+  return showDialog<_BoarderProofPreviewAction>(
+    context: context,
+    builder: (context) {
+      final colorScheme = Theme.of(context).colorScheme;
+
+      return AlertDialog(
+        title: const Text('Review payment proof'),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                fileName,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'This preview is compressed to JPG before upload to keep storage small.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Image.memory(
+                  preparedImage.bytes,
+                  height: 260,
+                  width: double.infinity,
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            key: const Key('proof-preview-choose-another-button'),
+            onPressed: () => Navigator.of(
+              context,
+            ).pop(_BoarderProofPreviewAction.chooseAnother),
+            child: const Text('Choose another'),
+          ),
+          FilledButton(
+            key: const Key('proof-preview-submit-button'),
+            onPressed: () =>
+                Navigator.of(context).pop(_BoarderProofPreviewAction.submit),
+            child: const Text('Submit proof'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
 class _BoarderDuesCard extends StatefulWidget {
   const _BoarderDuesCard({
     required this.dues,
+    required this.onPickPaymentProof,
     required this.onSubmitPaymentProof,
   });
 
   final List<DashboardDue> dues;
-  final Future<bool> Function(DashboardDue due) onSubmitPaymentProof;
+  final Future<PickedPaymentProofFile?> Function() onPickPaymentProof;
+  final Future<void> Function({
+    required DashboardDue due,
+    required PickedPaymentProofFile file,
+  })
+  onSubmitPaymentProof;
 
   @override
   State<_BoarderDuesCard> createState() => _BoarderDuesCardState();
@@ -824,20 +1102,49 @@ class _BoarderDuesCardState extends State<_BoarderDuesCard> {
     }
 
     setState(() {
-      _submittingDueId = due.id;
       _errorMessage = null;
     });
 
     try {
-      final submitted = await widget.onSubmitPaymentProof(due);
-      if (!mounted) {
-        return;
-      }
+      while (mounted) {
+        final file = await widget.onPickPaymentProof();
+        if (file == null) {
+          return;
+        }
 
-      if (submitted) {
+        final preparedImage = DashboardRepository.preparePaymentProofImage(
+          bytes: file.bytes,
+          fileName: file.fileName,
+        );
+        if (!mounted) {
+          return;
+        }
+
+        final action = await _showBoarderProofPreviewDialog(
+          context: context,
+          fileName: file.fileName,
+          preparedImage: preparedImage,
+        );
+
+        if (action == _BoarderProofPreviewAction.chooseAnother) {
+          continue;
+        }
+
+        if (action != _BoarderProofPreviewAction.submit) {
+          return;
+        }
+
+        setState(() => _submittingDueId = due.id);
+        await widget.onSubmitPaymentProof(due: due, file: file);
+
+        if (!mounted) {
+          return;
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Payment proof submitted.')),
         );
+        return;
       }
     } catch (error) {
       if (!mounted) {

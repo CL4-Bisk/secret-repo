@@ -24,8 +24,16 @@ final dashboardSummaryProvider = FutureProvider<DashboardSummary>((ref) {
   return ref.watch(dashboardRepositoryProvider).fetchSummary();
 });
 
+final transactionHistoryProvider = FutureProvider<TransactionHistory>((ref) {
+  ref.watch(authUserChangesProvider);
+
+  return ref.watch(dashboardRepositoryProvider).fetchTransactionHistory();
+});
+
 abstract interface class DashboardRepositoryContract {
   Future<DashboardSummary> fetchSummary();
+
+  Future<TransactionHistory> fetchTransactionHistory();
 
   Future<void> createOwnerApartment({required String name});
 
@@ -48,6 +56,8 @@ abstract interface class DashboardRepositoryContract {
   Future<void> reviewPaymentProof({
     required String proofId,
     required bool approved,
+    String? rejectionReason,
+    String? rejectionNote,
   });
 }
 
@@ -117,6 +127,40 @@ class DashboardRepository implements DashboardRepositoryContract {
       membership: activeMembership,
       boarders: boarders,
       dues: dues,
+      paymentProofs: paymentProofs,
+    );
+  }
+
+  @override
+  Future<TransactionHistory> fetchTransactionHistory() async {
+    final summary = await fetchSummary();
+    final membership = summary.membership;
+    final organizationId = membership?.organizationId;
+
+    if (organizationId == null) {
+      return TransactionHistory(summary: summary);
+    }
+
+    if (membership?.isOwner == true) {
+      return TransactionHistory(
+        summary: summary,
+        boarders: summary.boarders,
+        dues: summary.dues,
+        paymentProofs: summary.paymentProofs,
+      );
+    }
+
+    final userId = authRepository.currentUserId;
+    final paymentProofs = userId == null
+        ? const <DashboardPaymentProof>[]
+        : await _fetchPaymentProofs(
+            organizationId: organizationId,
+            boarderUserId: userId,
+          );
+
+    return TransactionHistory(
+      summary: summary,
+      dues: summary.dues,
       paymentProofs: paymentProofs,
     );
   }
@@ -290,6 +334,8 @@ class DashboardRepository implements DashboardRepositoryContract {
   Future<void> reviewPaymentProof({
     required String proofId,
     required bool approved,
+    String? rejectionReason,
+    String? rejectionNote,
   }) async {
     final userId = authRepository.currentUserId;
     if (userId == null) {
@@ -301,6 +347,8 @@ class DashboardRepository implements DashboardRepositoryContract {
       params: reviewPaymentProofRpcParams(
         proofId: proofId,
         approved: approved,
+        rejectionReason: rejectionReason,
+        rejectionNote: rejectionNote,
       ),
     );
   }
@@ -368,6 +416,7 @@ profiles!dues_boarder_user_id_fkey(full_name)
 
   Future<List<DashboardPaymentProof>> _fetchPaymentProofs({
     required String organizationId,
+    String? boarderUserId,
   }) async {
     const columns = '''
 id,
@@ -378,15 +427,22 @@ storage_path,
 amount_centavos,
 status,
 submitted_at,
+reviewed_at,
+rejection_reason,
+rejection_note,
 dues(title),
 profiles!payment_proofs_boarder_user_id_fkey(full_name)
 ''';
 
-    final rows = await client
+    final baseQuery = client
         .from('payment_proofs')
         .select(columns)
-        .eq('organization_id', organizationId)
-        .order('submitted_at', ascending: false);
+        .eq('organization_id', organizationId);
+    final rows = boarderUserId == null
+        ? await baseQuery.order('submitted_at', ascending: false)
+        : await baseQuery
+              .eq('boarder_user_id', boarderUserId)
+              .order('submitted_at', ascending: false);
 
     final proofs = <DashboardPaymentProof>[];
     for (final row in rows) {
@@ -594,14 +650,38 @@ profiles!payment_proofs_boarder_user_id_fkey(full_name)
     };
   }
 
-  static Map<String, Object> reviewPaymentProofRpcParams({
+  static Map<String, Object?> reviewPaymentProofRpcParams({
     required String proofId,
     required bool approved,
+    String? rejectionReason,
+    String? rejectionNote,
   }) {
-    return {
+    final params = <String, Object?>{
       'p_proof_id': proofId,
       'p_status': approved ? 'approved' : 'rejected',
     };
+
+    if (approved) {
+      return params;
+    }
+
+    final trimmedReason = rejectionReason?.trim();
+    if (trimmedReason == null || trimmedReason.isEmpty) {
+      throw ArgumentError.value(
+        rejectionReason,
+        'rejectionReason',
+        'Choose a rejection reason before rejecting the proof.',
+      );
+    }
+
+    params['p_rejection_reason'] = trimmedReason;
+
+    final trimmedNote = rejectionNote?.trim();
+    if (trimmedNote != null && trimmedNote.isNotEmpty) {
+      params['p_rejection_note'] = trimmedNote;
+    }
+
+    return params;
   }
 
   static Map<String, Object> ownerOrganizationInsert({
@@ -673,6 +753,9 @@ profiles!payment_proofs_boarder_user_id_fkey(full_name)
       storagePath: _readString(row, 'storage_path') ?? '',
       submittedAt:
           _readDateTime(row, 'submitted_at') ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      reviewedAt: _readDateTime(row, 'reviewed_at'),
+      rejectionReason: _readString(row, 'rejection_reason'),
+      rejectionNote: _readString(row, 'rejection_note'),
       signedUrl: signedUrl,
     );
   }
@@ -872,6 +955,22 @@ class DashboardSummary {
   }
 }
 
+class TransactionHistory {
+  const TransactionHistory({
+    required this.summary,
+    this.boarders = const [],
+    this.dues = const [],
+    this.paymentProofs = const [],
+  });
+
+  final DashboardSummary summary;
+  final List<DashboardBoarder> boarders;
+  final List<DashboardDue> dues;
+  final List<DashboardPaymentProof> paymentProofs;
+
+  bool get isOwner => summary.membership?.isOwner == true;
+}
+
 class DashboardMembership {
   const DashboardMembership({
     required this.role,
@@ -986,6 +1085,33 @@ class PreparedPaymentProofImage {
   final String extension;
 }
 
+enum PaymentProofRejectionReason {
+  invalidReceipt('invalid_receipt', 'Invalid receipt'),
+  expiredReceipt('expired_receipt', 'Expired receipt'),
+  wrongAmount('wrong_amount', 'Wrong amount'),
+  wrongDue('wrong_due', 'Wrong due'),
+  unclearImage('unclear_image', 'Unclear image'),
+  duplicatePayment('duplicate_payment', 'Duplicate payment'),
+  other('other', 'Other');
+
+  const PaymentProofRejectionReason(this.code, this.label);
+
+  final String code;
+  final String label;
+
+  static PaymentProofRejectionReason? fromCode(String? code) {
+    final normalizedCode = code?.trim().toLowerCase();
+
+    for (final reason in values) {
+      if (reason.code == normalizedCode) {
+        return reason;
+      }
+    }
+
+    return null;
+  }
+}
+
 class DashboardPaymentProof {
   const DashboardPaymentProof({
     required this.id,
@@ -998,6 +1124,9 @@ class DashboardPaymentProof {
     required this.status,
     required this.storagePath,
     required this.submittedAt,
+    this.reviewedAt,
+    this.rejectionReason,
+    this.rejectionNote,
     this.signedUrl,
   });
 
@@ -1011,6 +1140,9 @@ class DashboardPaymentProof {
   final String status;
   final String storagePath;
   final DateTime submittedAt;
+  final DateTime? reviewedAt;
+  final String? rejectionReason;
+  final String? rejectionNote;
   final String? signedUrl;
 
   bool get isPending => status.toLowerCase() == 'pending';
@@ -1029,6 +1161,17 @@ class DashboardPaymentProof {
       'rejected' => 'Rejected',
       _ => status,
     };
+  }
+
+  String get rejectionReasonLabel {
+    final reason = PaymentProofRejectionReason.fromCode(rejectionReason);
+    if (reason != null) {
+      return reason.label;
+    }
+
+    return rejectionReason?.trim().isNotEmpty == true
+        ? rejectionReason!.trim()
+        : 'No reason provided';
   }
 
   String get submittedAtLabel {
