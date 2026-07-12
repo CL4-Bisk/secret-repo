@@ -107,7 +107,7 @@ class _TransactionHistoryContentState
               ),
               const SizedBox(height: 8),
               Text(
-                'Filter dues and payment proof attempts without crowding the dashboard. <temp header>',
+                'Filter dues and payment proof attempts without crowding the dashboard.',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   color: colorScheme.onSurfaceVariant,
                 ),

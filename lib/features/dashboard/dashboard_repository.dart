@@ -48,6 +48,14 @@ abstract interface class DashboardRepositoryContract {
     required DateTime dueDate,
   });
 
+  Future<void> savePaymentSettings({
+    required String paymentLabel,
+    required String accountName,
+    required String accountNumber,
+    required String instructions,
+    PickedPaymentProofFile? qrFile,
+  });
+
   Future<void> submitPaymentProof({
     required DashboardDue due,
     required PickedPaymentProofFile file,
@@ -64,6 +72,7 @@ abstract interface class DashboardRepositoryContract {
 class DashboardRepository implements DashboardRepositoryContract {
   static const membershipUserIdColumn = 'user_id';
   static const paymentProofBucket = 'payment-proofs';
+  static const paymentQrBucket = 'payment-qrs';
   static const _maxProofImageDimension = 1200;
   static const _maxProofImageBytes = 1024 * 1024;
   static const _inviteAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -112,6 +121,11 @@ class DashboardRepository implements DashboardRepositoryContract {
             boarderUserId: activeMembership.isOwner ? null : userId,
           )
         : const <DashboardDue>[];
+    final paymentSettings = activeMembership?.organizationId != null
+        ? await _fetchPaymentSettings(
+            organizationId: activeMembership!.organizationId!,
+          )
+        : null;
     final paymentProofs =
         activeMembership?.isOwner == true &&
             activeMembership?.organizationId != null
@@ -127,6 +141,7 @@ class DashboardRepository implements DashboardRepositoryContract {
       membership: activeMembership,
       boarders: boarders,
       dues: dues,
+      paymentSettings: paymentSettings,
       paymentProofs: paymentProofs,
     );
   }
@@ -285,6 +300,54 @@ class DashboardRepository implements DashboardRepositoryContract {
   }
 
   @override
+  Future<void> savePaymentSettings({
+    required String paymentLabel,
+    required String accountName,
+    required String accountNumber,
+    required String instructions,
+    PickedPaymentProofFile? qrFile,
+  }) async {
+    final userId = authRepository.currentUserId;
+    if (userId == null) {
+      throw StateError('You must be signed in to save payment settings.');
+    }
+
+    final organizationId = await _currentOwnerOrganizationId(userId: userId);
+    String? qrStoragePath;
+
+    if (qrFile != null) {
+      final preparedImage = preparePaymentQrImage(
+        bytes: qrFile.bytes,
+        fileName: qrFile.fileName,
+      );
+      qrStoragePath = paymentQrStoragePath(organizationId: organizationId);
+
+      await client.storage
+          .from(paymentQrBucket)
+          .uploadBinary(
+            qrStoragePath,
+            preparedImage.bytes,
+            fileOptions: const FileOptions(
+              contentType: 'image/jpeg',
+              upsert: true,
+            ),
+          );
+    }
+
+    await client.rpc(
+      'save_organization_payment_settings',
+      params: ownerPaymentSettingsRpcParams(
+        organizationId: organizationId,
+        paymentLabel: paymentLabel,
+        accountName: accountName,
+        accountNumber: accountNumber,
+        instructions: instructions,
+        qrStoragePath: qrStoragePath,
+      ),
+    );
+  }
+
+  @override
   Future<void> submitPaymentProof({
     required DashboardDue due,
     required PickedPaymentProofFile file,
@@ -298,10 +361,7 @@ class DashboardRepository implements DashboardRepositoryContract {
       bytes: file.bytes,
       fileName: file.fileName,
     );
-    final storagePath = paymentProofStoragePath(
-      userId: userId,
-      dueId: due.id,
-    );
+    final storagePath = paymentProofStoragePath(userId: userId, dueId: due.id);
 
     await client.storage
         .from(paymentProofBucket)
@@ -412,6 +472,31 @@ profiles!dues_boarder_user_id_fkey(full_name)
               .order('due_date', ascending: true);
 
     return [for (final row in rows) dueFromRow(row)];
+  }
+
+  Future<DashboardPaymentSettings?> _fetchPaymentSettings({
+    required String organizationId,
+  }) async {
+    final row = await client
+        .from('organization_payment_settings')
+        .select(
+          'organization_id, payment_label, account_name, account_number, instructions, qr_storage_path',
+        )
+        .eq('organization_id', organizationId)
+        .maybeSingle();
+
+    if (row == null) {
+      return null;
+    }
+
+    final qrStoragePath = _readString(row, 'qr_storage_path');
+    final qrSignedUrl = qrStoragePath == null
+        ? null
+        : await client.storage
+              .from(paymentQrBucket)
+              .createSignedUrl(qrStoragePath, 60 * 60);
+
+    return paymentSettingsFromRow(row, qrSignedUrl: qrSignedUrl);
   }
 
   Future<List<DashboardPaymentProof>> _fetchPaymentProofs({
@@ -570,12 +655,39 @@ profiles!payment_proofs_boarder_user_id_fkey(full_name)
     required Uint8List bytes,
     required String fileName,
   }) {
+    return _prepareCompressedJpgImage(
+      bytes: bytes,
+      fileName: fileName,
+      imageLabel: 'receipt image',
+      tooLargeMessage: 'The image is still larger than 1 MB after compression.',
+    );
+  }
+
+  static PreparedPaymentProofImage preparePaymentQrImage({
+    required Uint8List bytes,
+    required String fileName,
+  }) {
+    return _prepareCompressedJpgImage(
+      bytes: bytes,
+      fileName: fileName,
+      imageLabel: 'QR code image',
+      tooLargeMessage:
+          'The QR image is still larger than 1 MB after compression.',
+    );
+  }
+
+  static PreparedPaymentProofImage _prepareCompressedJpgImage({
+    required Uint8List bytes,
+    required String fileName,
+    required String imageLabel,
+    required String tooLargeMessage,
+  }) {
     final extension = _fileExtension(fileName);
     if (!{'jpg', 'jpeg', 'png'}.contains(extension)) {
       throw ArgumentError.value(
         fileName,
         'fileName',
-        'Please upload a JPG or PNG receipt image.',
+        'Please upload a JPG or PNG $imageLabel.',
       );
     }
 
@@ -584,7 +696,7 @@ profiles!payment_proofs_boarder_user_id_fkey(full_name)
       throw ArgumentError.value(
         fileName,
         'fileName',
-        'The selected file is not a readable image.',
+        'The selected $imageLabel is not a readable image.',
       );
     }
 
@@ -609,11 +721,7 @@ profiles!payment_proofs_boarder_user_id_fkey(full_name)
     }
 
     if (encodedBytes.length > _maxProofImageBytes) {
-      throw ArgumentError.value(
-        fileName,
-        'fileName',
-        'The image is still larger than 1 MB after compression.',
-      );
+      throw ArgumentError.value(fileName, 'fileName', tooLargeMessage);
     }
 
     return PreparedPaymentProofImage(
@@ -630,10 +738,15 @@ profiles!payment_proofs_boarder_user_id_fkey(full_name)
   }) {
     final normalizedUserId = userId.trim();
     final normalizedDueId = dueId.trim();
-    final timestampPart =
-        (timestamp ?? DateTime.now().toUtc()).toUtc().millisecondsSinceEpoch;
+    final timestampPart = (timestamp ?? DateTime.now().toUtc())
+        .toUtc()
+        .millisecondsSinceEpoch;
 
     return '$normalizedUserId/$normalizedDueId-$timestampPart.jpg';
+  }
+
+  static String paymentQrStoragePath({required String organizationId}) {
+    return '${organizationId.trim()}/payment-qr.jpg';
   }
 
   static Map<String, Object> submitPaymentProofRpcParams({
@@ -682,6 +795,52 @@ profiles!payment_proofs_boarder_user_id_fkey(full_name)
     }
 
     return params;
+  }
+
+  static Map<String, Object?> ownerPaymentSettingsRpcParams({
+    required String organizationId,
+    required String paymentLabel,
+    required String accountName,
+    required String accountNumber,
+    required String instructions,
+    String? qrStoragePath,
+  }) {
+    final trimmedOrganizationId = _requiredTrimmedValue(
+      organizationId,
+      'organizationId',
+      'Apartment id is required.',
+    );
+    final trimmedPaymentLabel = _requiredTrimmedValue(
+      paymentLabel,
+      'paymentLabel',
+      'Payment label is required.',
+    );
+    final trimmedAccountName = _requiredTrimmedValue(
+      accountName,
+      'accountName',
+      'Account name is required.',
+    );
+    final trimmedAccountNumber = _requiredTrimmedValue(
+      accountNumber,
+      'accountNumber',
+      'Account number is required.',
+    );
+    final trimmedInstructions = instructions.trim();
+    final trimmedQrStoragePath = qrStoragePath?.trim();
+
+    return {
+      'p_organization_id': trimmedOrganizationId,
+      'p_payment_label': trimmedPaymentLabel,
+      'p_account_name': trimmedAccountName,
+      'p_account_number': trimmedAccountNumber,
+      'p_instructions': trimmedInstructions.isEmpty
+          ? null
+          : trimmedInstructions,
+      'p_qr_storage_path':
+          trimmedQrStoragePath == null || trimmedQrStoragePath.isEmpty
+          ? null
+          : trimmedQrStoragePath,
+    };
   }
 
   static Map<String, Object> ownerOrganizationInsert({
@@ -752,11 +911,30 @@ profiles!payment_proofs_boarder_user_id_fkey(full_name)
       status: _readString(row, 'status') ?? 'pending',
       storagePath: _readString(row, 'storage_path') ?? '',
       submittedAt:
-          _readDateTime(row, 'submitted_at') ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+          _readDateTime(row, 'submitted_at') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       reviewedAt: _readDateTime(row, 'reviewed_at'),
       rejectionReason: _readString(row, 'rejection_reason'),
       rejectionNote: _readString(row, 'rejection_note'),
       signedUrl: signedUrl,
+    );
+  }
+
+  static DashboardPaymentSettings paymentSettingsFromRow(
+    Map<String, dynamic> row, {
+    String? qrSignedUrl,
+  }) {
+    final organizationId =
+        _readString(row, 'organization_id') ?? 'Unknown apartment';
+
+    return DashboardPaymentSettings(
+      organizationId: organizationId,
+      paymentLabel: _readString(row, 'payment_label') ?? 'Payment account',
+      accountName: _readString(row, 'account_name') ?? '',
+      accountNumber: _readString(row, 'account_number') ?? '',
+      instructions: _readString(row, 'instructions'),
+      qrStoragePath: _readString(row, 'qr_storage_path'),
+      qrSignedUrl: qrSignedUrl,
     );
   }
 
@@ -821,6 +999,19 @@ profiles!payment_proofs_boarder_user_id_fkey(full_name)
 
     final trimmedValue = value.trim();
     return trimmedValue.isEmpty ? null : trimmedValue;
+  }
+
+  static String _requiredTrimmedValue(
+    String value,
+    String name,
+    String message,
+  ) {
+    final trimmedValue = value.trim();
+    if (trimmedValue.isEmpty) {
+      throw ArgumentError.value(value, name, message);
+    }
+
+    return trimmedValue;
   }
 
   static int? _readInt(Map<String, dynamic>? row, String key) {
@@ -890,6 +1081,7 @@ class DashboardSummary {
     this.membership,
     this.boarders = const [],
     this.dues = const [],
+    this.paymentSettings,
     this.paymentProofs = const [],
   });
 
@@ -899,6 +1091,7 @@ class DashboardSummary {
   final DashboardMembership? membership;
   final List<DashboardBoarder> boarders;
   final List<DashboardDue> dues;
+  final DashboardPaymentSettings? paymentSettings;
   final List<DashboardPaymentProof> paymentProofs;
 
   String get primaryIdentityLabel =>
@@ -1071,6 +1264,28 @@ class DashboardDue {
 
     return chunks.reversed.join(',');
   }
+}
+
+class DashboardPaymentSettings {
+  const DashboardPaymentSettings({
+    required this.organizationId,
+    required this.paymentLabel,
+    required this.accountName,
+    required this.accountNumber,
+    this.instructions,
+    this.qrStoragePath,
+    this.qrSignedUrl,
+  });
+
+  final String organizationId;
+  final String paymentLabel;
+  final String accountName;
+  final String accountNumber;
+  final String? instructions;
+  final String? qrStoragePath;
+  final String? qrSignedUrl;
+
+  bool get hasInstructions => instructions?.trim().isNotEmpty == true;
 }
 
 class PreparedPaymentProofImage {

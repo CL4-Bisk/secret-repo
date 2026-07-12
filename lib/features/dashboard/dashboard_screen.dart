@@ -69,6 +69,26 @@ class DashboardScreen extends ConsumerWidget {
                       );
                   ref.invalidate(dashboardSummaryProvider);
                 },
+            onPickPaymentQr: paymentProofPicker.pickImageProof,
+            onSavePaymentSettings:
+                ({
+                  required paymentLabel,
+                  required accountName,
+                  required accountNumber,
+                  required instructions,
+                  qrFile,
+                }) async {
+                  await ref
+                      .read(dashboardRepositoryProvider)
+                      .savePaymentSettings(
+                        paymentLabel: paymentLabel,
+                        accountName: accountName,
+                        accountNumber: accountNumber,
+                        instructions: instructions,
+                        qrFile: qrFile,
+                      );
+                  ref.invalidate(dashboardSummaryProvider);
+                },
             onPickPaymentProof: paymentProofPicker.pickImageProof,
             onSubmitPaymentProof:
                 ({
@@ -117,6 +137,8 @@ class _DashboardContent extends StatelessWidget {
     required this.onJoinWithInviteCode,
     required this.onCreateDue,
     required this.onRefreshBoarders,
+    required this.onPickPaymentQr,
+    required this.onSavePaymentSettings,
     required this.onPickPaymentProof,
     required this.onSubmitPaymentProof,
     required this.onReviewPaymentProof,
@@ -134,6 +156,15 @@ class _DashboardContent extends StatelessWidget {
     required DateTime dueDate,
   })
   onCreateDue;
+  final Future<PickedPaymentProofFile?> Function() onPickPaymentQr;
+  final Future<void> Function({
+    required String paymentLabel,
+    required String accountName,
+    required String accountNumber,
+    required String instructions,
+    PickedPaymentProofFile? qrFile,
+  })
+  onSavePaymentSettings;
   final Future<PickedPaymentProofFile?> Function() onPickPaymentProof;
   final Future<void> Function({
     required DashboardDue due,
@@ -198,6 +229,12 @@ class _DashboardContent extends StatelessWidget {
                   if (summary.membership?.isOwner == true) ...[
                     _OwnerInviteCard(onCreateInvite: onCreateOwnerInvite),
                     const SizedBox(height: 24),
+                    _OwnerPaymentSettingsCard(
+                      paymentSettings: summary.paymentSettings,
+                      onPickQrCode: onPickPaymentQr,
+                      onSavePaymentSettings: onSavePaymentSettings,
+                    ),
+                    const SizedBox(height: 24),
                     _OwnerBoardersCard(
                       boarders: summary.boarders,
                       onRefresh: onRefreshBoarders,
@@ -216,6 +253,10 @@ class _DashboardContent extends StatelessWidget {
                     const SizedBox(height: 24),
                   ],
                   if (summary.membership?.isOwner == false) ...[
+                    _BoarderPaymentInstructionsCard(
+                      paymentSettings: summary.paymentSettings,
+                    ),
+                    const SizedBox(height: 24),
                     _BoarderDuesCard(
                       dues: summary.dues,
                       onPickPaymentProof: onPickPaymentProof,
@@ -308,6 +349,459 @@ class _MissingRoleCard extends StatelessWidget {
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OwnerPaymentSettingsCard extends StatefulWidget {
+  const _OwnerPaymentSettingsCard({
+    required this.paymentSettings,
+    required this.onPickQrCode,
+    required this.onSavePaymentSettings,
+  });
+
+  final DashboardPaymentSettings? paymentSettings;
+  final Future<PickedPaymentProofFile?> Function() onPickQrCode;
+  final Future<void> Function({
+    required String paymentLabel,
+    required String accountName,
+    required String accountNumber,
+    required String instructions,
+    PickedPaymentProofFile? qrFile,
+  })
+  onSavePaymentSettings;
+
+  @override
+  State<_OwnerPaymentSettingsCard> createState() =>
+      _OwnerPaymentSettingsCardState();
+}
+
+class _OwnerPaymentSettingsCardState extends State<_OwnerPaymentSettingsCard> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _paymentLabelController;
+  late final TextEditingController _accountNameController;
+  late final TextEditingController _accountNumberController;
+  late final TextEditingController _instructionsController;
+  PickedPaymentProofFile? _selectedQrFile;
+  String? _errorMessage;
+  var _isSubmitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final settings = widget.paymentSettings;
+    _paymentLabelController = TextEditingController(
+      text: settings?.paymentLabel ?? '',
+    );
+    _accountNameController = TextEditingController(
+      text: settings?.accountName ?? '',
+    );
+    _accountNumberController = TextEditingController(
+      text: settings?.accountNumber ?? '',
+    );
+    _instructionsController = TextEditingController(
+      text: settings?.instructions ?? '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _paymentLabelController.dispose();
+    _accountNameController.dispose();
+    _accountNumberController.dispose();
+    _instructionsController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickQrCode() async {
+    try {
+      final file = await widget.onPickQrCode();
+      if (file == null) {
+        return;
+      }
+
+      DashboardRepository.preparePaymentQrImage(
+        bytes: file.bytes,
+        fileName: file.fileName,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _selectedQrFile = file;
+        _errorMessage = null;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _errorMessage = error.toString();
+      });
+    }
+  }
+
+  Future<void> _submit() async {
+    final isValid = _formKey.currentState?.validate() ?? false;
+    if (!isValid || _isSubmitting) {
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await widget.onSavePaymentSettings(
+        paymentLabel: _paymentLabelController.text,
+        accountName: _accountNameController.text,
+        accountNumber: _accountNumberController.text,
+        instructions: _instructionsController.text,
+        qrFile: _selectedQrFile,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() => _selectedQrFile = null);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Payment settings saved.')));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _errorMessage = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final existingQrUrl = widget.paymentSettings?.qrSignedUrl;
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.secondaryContainer,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Payment settings',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Tell boarders where to pay before they upload receipt proof.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSecondaryContainer,
+                ),
+              ),
+              const SizedBox(height: 20),
+              TextFormField(
+                key: const Key('owner-payment-label-field'),
+                controller: _paymentLabelController,
+                decoration: const InputDecoration(
+                  labelText: 'Payment method',
+                  hintText: 'Example: GCash',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Enter the payment method.';
+                  }
+
+                  return null;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                key: const Key('owner-payment-account-name-field'),
+                controller: _accountNameController,
+                decoration: const InputDecoration(
+                  labelText: 'Account name',
+                  hintText: 'Example: Apari Owner',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Enter the account name.';
+                  }
+
+                  return null;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                key: const Key('owner-payment-account-number-field'),
+                controller: _accountNumberController,
+                decoration: const InputDecoration(
+                  labelText: 'Account number',
+                  hintText: 'Example: 09170000000',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Enter the account number.';
+                  }
+
+                  return null;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                key: const Key('owner-payment-instructions-field'),
+                controller: _instructionsController,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Instructions',
+                  hintText: 'Example: Send exact amount, then upload receipt.',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 12,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    key: const Key('owner-payment-qr-pick-button'),
+                    onPressed: _isSubmitting ? null : _pickQrCode,
+                    icon: const Icon(Icons.qr_code_2),
+                    label: const Text('Choose QR image'),
+                  ),
+                  if (_selectedQrFile != null)
+                    Text(
+                      _selectedQrFile!.fileName,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.onSecondaryContainer,
+                      ),
+                    )
+                  else if (existingQrUrl != null)
+                    Text(
+                      'Current QR code saved',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.onSecondaryContainer,
+                      ),
+                    ),
+                ],
+              ),
+              if (existingQrUrl != null && _selectedQrFile == null) ...[
+                const SizedBox(height: 12),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Image.network(
+                    existingQrUrl,
+                    key: const Key('owner-payment-current-qr-image'),
+                    height: 160,
+                    width: 160,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, _, _) => Container(
+                      height: 120,
+                      width: 160,
+                      alignment: Alignment.center,
+                      color: colorScheme.surface,
+                      child: Text(
+                        'Could not preview QR.',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              if (_errorMessage != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _errorMessage!,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: colorScheme.error),
+                ),
+              ],
+              const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton(
+                  key: const Key('owner-payment-settings-submit-button'),
+                  onPressed: _isSubmitting ? null : _submit,
+                  child: _isSubmitting
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Save payment settings'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BoarderPaymentInstructionsCard extends StatelessWidget {
+  const _BoarderPaymentInstructionsCard({required this.paymentSettings});
+
+  final DashboardPaymentSettings? paymentSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final settings = paymentSettings;
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.tertiaryContainer,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'How to pay',
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            if (settings == null)
+              Text(
+                'No payment instructions yet. Ask the owner before sending payment.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onTertiaryContainer,
+                ),
+              )
+            else ...[
+              Text(
+                'Pay outside the app first, then upload your receipt proof.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onTertiaryContainer,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  _PaymentDetailChip(
+                    label: 'Method',
+                    value: settings.paymentLabel,
+                  ),
+                  _PaymentDetailChip(
+                    label: 'Account name',
+                    value: settings.accountName,
+                  ),
+                  _PaymentDetailChip(
+                    label: 'Account number',
+                    value: settings.accountNumber,
+                  ),
+                ],
+              ),
+              if (settings.hasInstructions) ...[
+                const SizedBox(height: 16),
+                Text(
+                  settings.instructions!.trim(),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onTertiaryContainer,
+                  ),
+                ),
+              ],
+              if (settings.qrSignedUrl != null) ...[
+                const SizedBox(height: 16),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: Image.network(
+                    settings.qrSignedUrl!,
+                    key: const Key('boarder-payment-qr-image'),
+                    height: 220,
+                    width: 220,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, _, _) => Container(
+                      height: 140,
+                      width: 220,
+                      alignment: Alignment.center,
+                      color: colorScheme.surface,
+                      child: Text(
+                        'Could not preview payment QR.',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PaymentDetailChip extends StatelessWidget {
+  const _PaymentDetailChip({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: colorScheme.primary,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 4),
+            SelectableText(
+              value,
+              style: Theme.of(
+                context,
+              ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w700),
             ),
           ],
         ),
@@ -596,10 +1090,7 @@ class _PaymentProofListTile extends StatelessWidget {
 }
 
 class _PaymentProofRejection {
-  const _PaymentProofRejection({
-    required this.reason,
-    required this.note,
-  });
+  const _PaymentProofRejection({required this.reason, required this.note});
 
   final PaymentProofRejectionReason reason;
   final String? note;
@@ -659,10 +1150,7 @@ class _PaymentProofRejectionDialogState
             ),
             items: [
               for (final reason in PaymentProofRejectionReason.values)
-                DropdownMenuItem(
-                  value: reason,
-                  child: Text(reason.label),
-                ),
+                DropdownMenuItem(value: reason, child: Text(reason.label)),
             ],
             onChanged: (reason) {
               if (reason == null) {
@@ -1479,10 +1967,7 @@ class _OwnerInviteCardState extends State<_OwnerInviteCard> {
 }
 
 class _OwnerBoardersCard extends StatelessWidget {
-  const _OwnerBoardersCard({
-    required this.boarders,
-    required this.onRefresh,
-  });
+  const _OwnerBoardersCard({required this.boarders, required this.onRefresh});
 
   final List<DashboardBoarder> boarders;
   final VoidCallback onRefresh;
