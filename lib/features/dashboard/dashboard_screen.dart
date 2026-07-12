@@ -34,6 +34,7 @@ class DashboardScreen extends ConsumerWidget {
         child: summary.when(
           data: (value) => _DashboardContent(
             summary: value,
+            onRefreshBoarders: () => ref.invalidate(dashboardSummaryProvider),
             onCreateOwnerApartment: (name) async {
               await ref
                   .read(dashboardRepositoryProvider)
@@ -85,9 +86,11 @@ class _DashboardContent extends StatelessWidget {
     required this.onCreateOwnerInvite,
     required this.onJoinWithInviteCode,
     required this.onCreateDue,
+    required this.onRefreshBoarders,
   });
 
   final DashboardSummary summary;
+  final VoidCallback onRefreshBoarders;
   final Future<void> Function(String name) onCreateOwnerApartment;
   final Future<String> Function() onCreateOwnerInvite;
   final Future<void> Function(String code) onJoinWithInviteCode;
@@ -139,7 +142,10 @@ class _DashboardContent extends StatelessWidget {
                   if (summary.membership?.isOwner == true) ...[
                     _OwnerInviteCard(onCreateInvite: onCreateOwnerInvite),
                     const SizedBox(height: 24),
-                    _OwnerBoardersCard(boarders: summary.boarders),
+                    _OwnerBoardersCard(
+                      boarders: summary.boarders,
+                      onRefresh: onRefreshBoarders,
+                    ),
                     const SizedBox(height: 24),
                     _OwnerDuesCard(
                       boarders: summary.boarders,
@@ -786,9 +792,13 @@ class _OwnerInviteCardState extends State<_OwnerInviteCard> {
 }
 
 class _OwnerBoardersCard extends StatelessWidget {
-  const _OwnerBoardersCard({required this.boarders});
+  const _OwnerBoardersCard({
+    required this.boarders,
+    required this.onRefresh,
+  });
 
   final List<DashboardBoarder> boarders;
+  final VoidCallback onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -807,11 +817,23 @@ class _OwnerBoardersCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Boarders',
-              style: Theme.of(
-                context,
-              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Boarders',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                TextButton.icon(
+                  key: const Key('owner-boarders-refresh-button'),
+                  onPressed: onRefresh,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Refresh boarders'),
+                ),
+              ],
             ),
             const SizedBox(height: 8),
             Text(
