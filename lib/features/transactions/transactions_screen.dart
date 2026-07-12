@@ -101,9 +101,9 @@ class _TransactionHistoryContentState
             children: [
               Text(
                 'Transaction history',
-                style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 8),
               Text(
@@ -288,10 +288,7 @@ class _HistoryFilters extends StatelessWidget {
 }
 
 class _FilterGroup extends StatelessWidget {
-  const _FilterGroup({
-    required this.label,
-    required this.children,
-  });
+  const _FilterGroup({required this.label, required this.children});
 
   final String label;
   final List<Widget> children;
@@ -403,11 +400,7 @@ class _HistoryDueTile extends StatelessWidget {
       icon: Icons.receipt_long_outlined,
       title: due.title,
       subtitle: due.boarderName,
-      badges: [
-        due.amountLabel,
-        'Due ${due.dueDateLabel}',
-        due.statusLabel,
-      ],
+      badges: [due.amountLabel, 'Due ${due.dueDateLabel}', due.statusLabel],
     );
   }
 }
@@ -419,7 +412,7 @@ class _HistoryProofTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _HistoryTile(
+    final tile = _HistoryTile(
       icon: Icons.fact_check_outlined,
       title: proof.dueTitle,
       subtitle: proof.boarderName,
@@ -432,7 +425,143 @@ class _HistoryProofTile extends StatelessWidget {
       ],
       detail: proof.rejectionNote,
     );
+
+    if (proof.signedUrl == null) {
+      return tile;
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        tile,
+        const SizedBox(height: 12),
+        Padding(
+          padding: const EdgeInsets.only(left: 52),
+          child: _ProofImagePreviewButton(proof: proof),
+        ),
+      ],
+    );
   }
+}
+
+class _ProofImagePreviewButton extends StatelessWidget {
+  const _ProofImagePreviewButton({required this.proof});
+
+  final DashboardPaymentProof proof;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final signedUrl = proof.signedUrl;
+
+    if (signedUrl == null) {
+      return const SizedBox.shrink();
+    }
+
+    return InkWell(
+      key: Key('history-proof-preview-${proof.id}'),
+      borderRadius: BorderRadius.circular(18),
+      onTap: () => _showHistoryPaymentProofPreviewDialog(context, proof),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          border: Border.all(color: colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(
+                  signedUrl,
+                  width: 96,
+                  height: 72,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, _, _) => Container(
+                    width: 96,
+                    height: 72,
+                    alignment: Alignment.center,
+                    color: colorScheme.surfaceContainerHighest,
+                    child: Icon(
+                      Icons.broken_image_outlined,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Receipt image',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Tap to preview full screen',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.open_in_full, color: colorScheme.primary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _showHistoryPaymentProofPreviewDialog(
+  BuildContext context,
+  DashboardPaymentProof proof,
+) {
+  final signedUrl = proof.signedUrl;
+  if (signedUrl == null) {
+    return Future.value();
+  }
+
+  return showDialog<void>(
+    context: context,
+    builder: (context) {
+      return Dialog.fullscreen(
+        child: Scaffold(
+          appBar: AppBar(
+            title: const Text('Payment proof preview'),
+            actions: [
+              TextButton(
+                key: const Key('proof-preview-close-button'),
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+          body: Center(
+            child: InteractiveViewer(
+              child: Image.network(
+                signedUrl,
+                fit: BoxFit.contain,
+                errorBuilder: (context, _, _) => const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text('Could not preview this proof image.'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
 }
 
 class _HistoryTile extends StatelessWidget {
