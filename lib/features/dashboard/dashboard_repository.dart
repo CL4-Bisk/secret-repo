@@ -1,10 +1,13 @@
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image/image.dart' as image;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../auth/auth_repository.dart';
+import 'payment_proof_picker.dart';
 
 final dashboardRepositoryProvider = Provider<DashboardRepositoryContract>((
   ref,
@@ -36,10 +39,23 @@ abstract interface class DashboardRepositoryContract {
     required int amountCentavos,
     required DateTime dueDate,
   });
+
+  Future<void> submitPaymentProof({
+    required DashboardDue due,
+    required PickedPaymentProofFile file,
+  });
+
+  Future<void> reviewPaymentProof({
+    required String proofId,
+    required bool approved,
+  });
 }
 
 class DashboardRepository implements DashboardRepositoryContract {
   static const membershipUserIdColumn = 'user_id';
+  static const paymentProofBucket = 'payment-proofs';
+  static const _maxProofImageDimension = 1200;
+  static const _maxProofImageBytes = 1024 * 1024;
   static const _inviteAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
   const DashboardRepository({
@@ -86,6 +102,13 @@ class DashboardRepository implements DashboardRepositoryContract {
             boarderUserId: activeMembership.isOwner ? null : userId,
           )
         : const <DashboardDue>[];
+    final paymentProofs =
+        activeMembership?.isOwner == true &&
+            activeMembership?.organizationId != null
+        ? await _fetchPaymentProofs(
+            organizationId: activeMembership!.organizationId!,
+          )
+        : const <DashboardPaymentProof>[];
 
     return DashboardSummary(
       displayName: _readString(profile, 'full_name') ?? email,
@@ -94,6 +117,7 @@ class DashboardRepository implements DashboardRepositoryContract {
       membership: activeMembership,
       boarders: boarders,
       dues: dues,
+      paymentProofs: paymentProofs,
     );
   }
 
@@ -216,6 +240,71 @@ class DashboardRepository implements DashboardRepositoryContract {
         );
   }
 
+  @override
+  Future<void> submitPaymentProof({
+    required DashboardDue due,
+    required PickedPaymentProofFile file,
+  }) async {
+    final userId = authRepository.currentUserId;
+    if (userId == null) {
+      throw StateError('You must be signed in to submit a payment proof.');
+    }
+
+    final preparedImage = preparePaymentProofImage(
+      bytes: file.bytes,
+      fileName: file.fileName,
+    );
+    final storagePath = paymentProofStoragePath(
+      userId: userId,
+      dueId: due.id,
+    );
+
+    await client.storage
+        .from(paymentProofBucket)
+        .uploadBinary(
+          storagePath,
+          preparedImage.bytes,
+          fileOptions: const FileOptions(
+            contentType: 'image/jpeg',
+            upsert: false,
+          ),
+        );
+
+    try {
+      await client.rpc(
+        'submit_payment_proof',
+        params: submitPaymentProofRpcParams(
+          dueId: due.id,
+          storagePath: storagePath,
+          amountCentavos: due.amountCentavos,
+          originalFileName: file.fileName,
+        ),
+      );
+    } catch (_) {
+      await _removeUploadedProofIfUnused(storagePath);
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> reviewPaymentProof({
+    required String proofId,
+    required bool approved,
+  }) async {
+    final userId = authRepository.currentUserId;
+    if (userId == null) {
+      throw StateError('You must be signed in to review a payment proof.');
+    }
+
+    await client.rpc(
+      'review_payment_proof',
+      params: reviewPaymentProofRpcParams(
+        proofId: proofId,
+        approved: approved,
+      ),
+    );
+  }
+
   Future<String> _currentOwnerOrganizationId({required String userId}) async {
     final membership = await client
         .from('memberships')
@@ -275,6 +364,50 @@ profiles!dues_boarder_user_id_fkey(full_name)
               .order('due_date', ascending: true);
 
     return [for (final row in rows) dueFromRow(row)];
+  }
+
+  Future<List<DashboardPaymentProof>> _fetchPaymentProofs({
+    required String organizationId,
+  }) async {
+    const columns = '''
+id,
+due_id,
+organization_id,
+boarder_user_id,
+storage_path,
+amount_centavos,
+status,
+submitted_at,
+dues(title),
+profiles!payment_proofs_boarder_user_id_fkey(full_name)
+''';
+
+    final rows = await client
+        .from('payment_proofs')
+        .select(columns)
+        .eq('organization_id', organizationId)
+        .order('submitted_at', ascending: false);
+
+    final proofs = <DashboardPaymentProof>[];
+    for (final row in rows) {
+      final storagePath = _readString(row, 'storage_path');
+      final signedUrl = storagePath == null
+          ? null
+          : await client.storage
+                .from(paymentProofBucket)
+                .createSignedUrl(storagePath, 60 * 60);
+      proofs.add(paymentProofFromRow(row, signedUrl: signedUrl));
+    }
+
+    return proofs;
+  }
+
+  Future<void> _removeUploadedProofIfUnused(String storagePath) async {
+    try {
+      await client.storage.from(paymentProofBucket).remove([storagePath]);
+    } catch (_) {
+      // The database error is more useful to the user than cleanup failure.
+    }
   }
 
   Future<void> _ensureCurrentUserProfile({required String userId}) async {
@@ -377,6 +510,100 @@ profiles!dues_boarder_user_id_fkey(full_name)
     };
   }
 
+  static PreparedPaymentProofImage preparePaymentProofImage({
+    required Uint8List bytes,
+    required String fileName,
+  }) {
+    final extension = _fileExtension(fileName);
+    if (!{'jpg', 'jpeg', 'png'}.contains(extension)) {
+      throw ArgumentError.value(
+        fileName,
+        'fileName',
+        'Please upload a JPG or PNG receipt image.',
+      );
+    }
+
+    final decodedImage = image.decodeImage(bytes);
+    if (decodedImage == null) {
+      throw ArgumentError.value(
+        fileName,
+        'fileName',
+        'The selected file is not a readable image.',
+      );
+    }
+
+    var resizedImage = _resizeProofImage(decodedImage, _maxProofImageDimension);
+    var quality = 70;
+    var encodedBytes = Uint8List.fromList(
+      image.encodeJpg(resizedImage, quality: quality),
+    );
+
+    while (encodedBytes.length > _maxProofImageBytes && quality > 45) {
+      quality -= 10;
+      encodedBytes = Uint8List.fromList(
+        image.encodeJpg(resizedImage, quality: quality),
+      );
+    }
+
+    if (encodedBytes.length > _maxProofImageBytes) {
+      resizedImage = _resizeProofImage(resizedImage, 900);
+      encodedBytes = Uint8List.fromList(
+        image.encodeJpg(resizedImage, quality: 50),
+      );
+    }
+
+    if (encodedBytes.length > _maxProofImageBytes) {
+      throw ArgumentError.value(
+        fileName,
+        'fileName',
+        'The image is still larger than 1 MB after compression.',
+      );
+    }
+
+    return PreparedPaymentProofImage(
+      bytes: encodedBytes,
+      contentType: 'image/jpeg',
+      extension: 'jpg',
+    );
+  }
+
+  static String paymentProofStoragePath({
+    required String userId,
+    required String dueId,
+    DateTime? timestamp,
+  }) {
+    final normalizedUserId = userId.trim();
+    final normalizedDueId = dueId.trim();
+    final timestampPart =
+        (timestamp ?? DateTime.now().toUtc()).toUtc().millisecondsSinceEpoch;
+
+    return '$normalizedUserId/$normalizedDueId-$timestampPart.jpg';
+  }
+
+  static Map<String, Object> submitPaymentProofRpcParams({
+    required String dueId,
+    required String storagePath,
+    required int amountCentavos,
+    required String originalFileName,
+  }) {
+    return {
+      'p_due_id': dueId,
+      'p_storage_path': storagePath.trim(),
+      'p_amount_centavos': amountCentavos,
+      'p_original_file_name': originalFileName.trim(),
+    };
+  }
+
+  static Map<String, Object> reviewPaymentProofRpcParams({
+    required String proofId,
+    required bool approved,
+  }) {
+    return {
+      'p_proof_id': proofId,
+      'p_status': approved ? 'approved' : 'rejected',
+    };
+  }
+
   static Map<String, Object> ownerOrganizationInsert({
     required String name,
     required String userId,
@@ -425,6 +652,31 @@ profiles!dues_boarder_user_id_fkey(full_name)
     );
   }
 
+  static DashboardPaymentProof paymentProofFromRow(
+    Map<String, dynamic> row, {
+    String? signedUrl,
+  }) {
+    final due = _embeddedMapFromValue(row['dues']);
+    final profile = _embeddedMapFromValue(row['profiles']);
+    final boarderUserId =
+        _readString(row, 'boarder_user_id') ?? 'Unknown boarder';
+
+    return DashboardPaymentProof(
+      id: _readString(row, 'id') ?? '',
+      dueId: _readString(row, 'due_id') ?? '',
+      organizationId: _readString(row, 'organization_id') ?? '',
+      boarderUserId: boarderUserId,
+      boarderName: _readString(profile, 'full_name') ?? boarderUserId,
+      dueTitle: _readString(due, 'title') ?? 'Untitled due',
+      amountCentavos: _readInt(row, 'amount_centavos') ?? 0,
+      status: _readString(row, 'status') ?? 'pending',
+      storagePath: _readString(row, 'storage_path') ?? '',
+      submittedAt:
+          _readDateTime(row, 'submitted_at') ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      signedUrl: signedUrl,
+    );
+  }
+
   DashboardMembership? _membershipFromRow(Map<String, dynamic>? row) {
     if (row == null) {
       return null;
@@ -454,6 +706,28 @@ profiles!dues_boarder_user_id_fkey(full_name)
     }
 
     return null;
+  }
+
+  static image.Image _resizeProofImage(image.Image source, int maxDimension) {
+    final longestSide = max(source.width, source.height);
+    if (longestSide <= maxDimension) {
+      return source;
+    }
+
+    if (source.width >= source.height) {
+      return image.copyResize(source, width: maxDimension);
+    }
+
+    return image.copyResize(source, height: maxDimension);
+  }
+
+  static String _fileExtension(String fileName) {
+    final parts = fileName.trim().split('.');
+    if (parts.length < 2) {
+      return '';
+    }
+
+    return parts.last.toLowerCase();
   }
 
   static String? _readString(Map<String, dynamic>? row, String key) {
@@ -501,6 +775,19 @@ profiles!dues_boarder_user_id_fkey(full_name)
     return null;
   }
 
+  static DateTime? _readDateTime(Map<String, dynamic>? row, String key) {
+    final value = row?[key];
+    if (value is DateTime) {
+      return value.toUtc();
+    }
+
+    if (value is String) {
+      return DateTime.tryParse(value)?.toUtc();
+    }
+
+    return null;
+  }
+
   static String _formatDate(DateTime date) {
     final normalized = DateTime.utc(date.year, date.month, date.day);
 
@@ -520,6 +807,7 @@ class DashboardSummary {
     this.membership,
     this.boarders = const [],
     this.dues = const [],
+    this.paymentProofs = const [],
   });
 
   final String displayName;
@@ -528,6 +816,7 @@ class DashboardSummary {
   final DashboardMembership? membership;
   final List<DashboardBoarder> boarders;
   final List<DashboardDue> dues;
+  final List<DashboardPaymentProof> paymentProofs;
 
   String get primaryIdentityLabel =>
       displayName.isNotEmpty ? displayName : email;
@@ -664,6 +953,13 @@ class DashboardDue {
     };
   }
 
+  bool get canSubmitProof {
+    return switch (status.toLowerCase()) {
+      'unpaid' || 'rejected' => true,
+      _ => false,
+    };
+  }
+
   static String _formatThousands(int value) {
     final source = value.toString();
     final reversedCharacters = source.split('').reversed.toList();
@@ -675,5 +971,73 @@ class DashboardDue {
     }
 
     return chunks.reversed.join(',');
+  }
+}
+
+class PreparedPaymentProofImage {
+  const PreparedPaymentProofImage({
+    required this.bytes,
+    required this.contentType,
+    required this.extension,
+  });
+
+  final Uint8List bytes;
+  final String contentType;
+  final String extension;
+}
+
+class DashboardPaymentProof {
+  const DashboardPaymentProof({
+    required this.id,
+    required this.dueId,
+    required this.organizationId,
+    required this.boarderUserId,
+    required this.boarderName,
+    required this.dueTitle,
+    required this.amountCentavos,
+    required this.status,
+    required this.storagePath,
+    required this.submittedAt,
+    this.signedUrl,
+  });
+
+  final String id;
+  final String dueId;
+  final String organizationId;
+  final String boarderUserId;
+  final String boarderName;
+  final String dueTitle;
+  final int amountCentavos;
+  final String status;
+  final String storagePath;
+  final DateTime submittedAt;
+  final String? signedUrl;
+
+  bool get isPending => status.toLowerCase() == 'pending';
+
+  String get amountLabel {
+    final pesos = amountCentavos ~/ 100;
+    final centavos = amountCentavos % 100;
+
+    return 'P${DashboardDue._formatThousands(pesos)}.${centavos.toString().padLeft(2, '0')}';
+  }
+
+  String get statusLabel {
+    return switch (status.toLowerCase()) {
+      'pending' => 'Pending',
+      'approved' => 'Approved',
+      'rejected' => 'Rejected',
+      _ => status,
+    };
+  }
+
+  String get submittedAtLabel {
+    final utc = submittedAt.toUtc();
+
+    return [
+      utc.year.toString().padLeft(4, '0'),
+      utc.month.toString().padLeft(2, '0'),
+      utc.day.toString().padLeft(2, '0'),
+    ].join('-');
   }
 }

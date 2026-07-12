@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../auth/auth_repository.dart';
 import 'dashboard_repository.dart';
+import 'payment_proof_picker.dart';
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -11,6 +12,7 @@ class DashboardScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final authRepository = ref.watch(authRepositoryProvider);
+    final paymentProofPicker = ref.watch(paymentProofPickerProvider);
     final summary = ref.watch(dashboardSummaryProvider);
     final colorScheme = Theme.of(context).colorScheme;
 
@@ -67,6 +69,28 @@ class DashboardScreen extends ConsumerWidget {
                       );
                   ref.invalidate(dashboardSummaryProvider);
                 },
+            onSubmitPaymentProof: (due) async {
+              final file = await paymentProofPicker.pickImageProof();
+              if (file == null) {
+                return false;
+              }
+
+              await ref
+                  .read(dashboardRepositoryProvider)
+                  .submitPaymentProof(due: due, file: file);
+              ref.invalidate(dashboardSummaryProvider);
+              return true;
+            },
+            onReviewPaymentProof:
+                ({required proofId, required approved}) async {
+                  await ref
+                      .read(dashboardRepositoryProvider)
+                      .reviewPaymentProof(
+                        proofId: proofId,
+                        approved: approved,
+                      );
+                  ref.invalidate(dashboardSummaryProvider);
+                },
           ),
           error: (error, _) => _DashboardError(
             message: error.toString(),
@@ -87,6 +111,8 @@ class _DashboardContent extends StatelessWidget {
     required this.onJoinWithInviteCode,
     required this.onCreateDue,
     required this.onRefreshBoarders,
+    required this.onSubmitPaymentProof,
+    required this.onReviewPaymentProof,
   });
 
   final DashboardSummary summary;
@@ -101,6 +127,12 @@ class _DashboardContent extends StatelessWidget {
     required DateTime dueDate,
   })
   onCreateDue;
+  final Future<bool> Function(DashboardDue due) onSubmitPaymentProof;
+  final Future<void> Function({
+    required String proofId,
+    required bool approved,
+  })
+  onReviewPaymentProof;
 
   @override
   Widget build(BuildContext context) {
@@ -147,6 +179,11 @@ class _DashboardContent extends StatelessWidget {
                       onRefresh: onRefreshBoarders,
                     ),
                     const SizedBox(height: 24),
+                    _OwnerPaymentProofsCard(
+                      paymentProofs: summary.paymentProofs,
+                      onReviewPaymentProof: onReviewPaymentProof,
+                    ),
+                    const SizedBox(height: 24),
                     _OwnerDuesCard(
                       boarders: summary.boarders,
                       dues: summary.dues,
@@ -155,7 +192,10 @@ class _DashboardContent extends StatelessWidget {
                     const SizedBox(height: 24),
                   ],
                   if (summary.membership?.isOwner == false) ...[
-                    _BoarderDuesCard(dues: summary.dues),
+                    _BoarderDuesCard(
+                      dues: summary.dues,
+                      onSubmitPaymentProof: onSubmitPaymentProof,
+                    ),
                     const SizedBox(height: 24),
                   ],
                   Wrap(
@@ -247,6 +287,255 @@ class _MissingRoleCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _OwnerPaymentProofsCard extends StatefulWidget {
+  const _OwnerPaymentProofsCard({
+    required this.paymentProofs,
+    required this.onReviewPaymentProof,
+  });
+
+  final List<DashboardPaymentProof> paymentProofs;
+  final Future<void> Function({
+    required String proofId,
+    required bool approved,
+  })
+  onReviewPaymentProof;
+
+  @override
+  State<_OwnerPaymentProofsCard> createState() =>
+      _OwnerPaymentProofsCardState();
+}
+
+class _OwnerPaymentProofsCardState extends State<_OwnerPaymentProofsCard> {
+  String? _reviewingProofId;
+  String? _errorMessage;
+
+  Future<void> _review(DashboardPaymentProof proof, bool approved) async {
+    if (_reviewingProofId != null) {
+      return;
+    }
+
+    setState(() {
+      _reviewingProofId = proof.id;
+      _errorMessage = null;
+    });
+
+    try {
+      await widget.onReviewPaymentProof(
+        proofId: proof.id,
+        approved: approved,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            approved ? 'Payment proof approved.' : 'Payment proof rejected.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _errorMessage = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _reviewingProofId = null);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final pendingCount = widget.paymentProofs
+        .where((proof) => proof.isPending)
+        .length;
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.tertiaryContainer,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Payment proofs',
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              pendingCount == 0
+                  ? 'No pending payment proofs to review.'
+                  : '$pendingCount proof${pendingCount == 1 ? '' : 's'} waiting for review.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onTertiaryContainer,
+              ),
+            ),
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _errorMessage!,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: colorScheme.error),
+              ),
+            ],
+            const SizedBox(height: 16),
+            if (widget.paymentProofs.isEmpty)
+              Text(
+                'Boarders can upload a compressed receipt image after you assign a due.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onTertiaryContainer,
+                ),
+              )
+            else
+              Column(
+                children: [
+                  for (final proof in widget.paymentProofs) ...[
+                    _PaymentProofListTile(
+                      proof: proof,
+                      isReviewing: _reviewingProofId == proof.id,
+                      onApprove: () => _review(proof, true),
+                      onReject: () => _review(proof, false),
+                    ),
+                    if (proof != widget.paymentProofs.last)
+                      const Divider(height: 28),
+                  ],
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PaymentProofListTile extends StatelessWidget {
+  const _PaymentProofListTile({
+    required this.proof,
+    required this.isReviewing,
+    required this.onApprove,
+    required this.onReject,
+  });
+
+  final DashboardPaymentProof proof;
+  final bool isReviewing;
+  final VoidCallback onApprove;
+  final VoidCallback onReject;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              backgroundColor: colorScheme.surface,
+              foregroundColor: colorScheme.primary,
+              child: const Icon(Icons.fact_check_outlined),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    proof.boarderName,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    proof.dueTitle,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _DueBadge(label: proof.amountLabel),
+                      _DueBadge(label: 'Sent ${proof.submittedAtLabel}'),
+                      _DueBadge(label: proof.statusLabel),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        if (proof.signedUrl != null) ...[
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Image.network(
+              proof.signedUrl!,
+              height: 180,
+              width: double.infinity,
+              fit: BoxFit.cover,
+              errorBuilder: (context, _, _) => Container(
+                height: 120,
+                alignment: Alignment.center,
+                color: colorScheme.surface,
+                child: Text(
+                  'Could not preview this proof image.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+        if (proof.isPending) ...[
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(
+                key: Key('owner-proof-approve-${proof.id}'),
+                onPressed: isReviewing ? null : onApprove,
+                icon: isReviewing
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.check),
+                label: const Text('Approve'),
+              ),
+              OutlinedButton.icon(
+                key: Key('owner-proof-reject-${proof.id}'),
+                onPressed: isReviewing ? null : onReject,
+                icon: const Icon(Icons.close),
+                label: const Text('Reject'),
+              ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 }
@@ -512,10 +801,58 @@ class _OwnerDuesCardState extends State<_OwnerDuesCard> {
   }
 }
 
-class _BoarderDuesCard extends StatelessWidget {
-  const _BoarderDuesCard({required this.dues});
+class _BoarderDuesCard extends StatefulWidget {
+  const _BoarderDuesCard({
+    required this.dues,
+    required this.onSubmitPaymentProof,
+  });
 
   final List<DashboardDue> dues;
+  final Future<bool> Function(DashboardDue due) onSubmitPaymentProof;
+
+  @override
+  State<_BoarderDuesCard> createState() => _BoarderDuesCardState();
+}
+
+class _BoarderDuesCardState extends State<_BoarderDuesCard> {
+  String? _submittingDueId;
+  String? _errorMessage;
+
+  Future<void> _submitPaymentProof(DashboardDue due) async {
+    if (_submittingDueId != null) {
+      return;
+    }
+
+    setState(() {
+      _submittingDueId = due.id;
+      _errorMessage = null;
+    });
+
+    try {
+      final submitted = await widget.onSubmitPaymentProof(due);
+      if (!mounted) {
+        return;
+      }
+
+      if (submitted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Payment proof submitted.')),
+        );
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _errorMessage = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _submittingDueId = null);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -544,10 +881,21 @@ class _BoarderDuesCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
+            if (_errorMessage != null) ...[
+              Text(
+                _errorMessage!,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: colorScheme.error),
+              ),
+              const SizedBox(height: 16),
+            ],
             _DueList(
-              dues: dues,
+              dues: widget.dues,
               emptyMessage: 'No dues assigned yet.',
               showBoarderName: false,
+              onSubmitPaymentProof: _submitPaymentProof,
+              submittingDueId: _submittingDueId,
             ),
           ],
         ),
@@ -561,11 +909,15 @@ class _DueList extends StatelessWidget {
     required this.dues,
     required this.emptyMessage,
     required this.showBoarderName,
+    this.onSubmitPaymentProof,
+    this.submittingDueId,
   });
 
   final List<DashboardDue> dues;
   final String emptyMessage;
   final bool showBoarderName;
+  final Future<void> Function(DashboardDue due)? onSubmitPaymentProof;
+  final String? submittingDueId;
 
   @override
   Widget build(BuildContext context) {
@@ -583,7 +935,12 @@ class _DueList extends StatelessWidget {
     return Column(
       children: [
         for (final due in dues) ...[
-          _DueListTile(due: due, showBoarderName: showBoarderName),
+          _DueListTile(
+            due: due,
+            showBoarderName: showBoarderName,
+            onSubmitPaymentProof: onSubmitPaymentProof,
+            isSubmittingProof: submittingDueId == due.id,
+          ),
           if (due != dues.last) const Divider(height: 24),
         ],
       ],
@@ -592,10 +949,17 @@ class _DueList extends StatelessWidget {
 }
 
 class _DueListTile extends StatelessWidget {
-  const _DueListTile({required this.due, required this.showBoarderName});
+  const _DueListTile({
+    required this.due,
+    required this.showBoarderName,
+    this.onSubmitPaymentProof,
+    this.isSubmittingProof = false,
+  });
 
   final DashboardDue due;
   final bool showBoarderName;
+  final Future<void> Function(DashboardDue due)? onSubmitPaymentProof;
+  final bool isSubmittingProof;
 
   @override
   Widget build(BuildContext context) {
@@ -639,6 +1003,22 @@ class _DueListTile extends StatelessWidget {
                   _DueBadge(label: due.statusLabel),
                 ],
               ),
+              if (onSubmitPaymentProof != null && due.canSubmitProof) ...[
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  key: Key('boarder-proof-upload-${due.id}'),
+                  onPressed: isSubmittingProof
+                      ? null
+                      : () => onSubmitPaymentProof!(due),
+                  icon: isSubmittingProof
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.upload_file_outlined),
+                  label: Text(isSubmittingProof ? 'Uploading' : 'Upload proof'),
+                ),
+              ],
             ],
           ),
         ),
