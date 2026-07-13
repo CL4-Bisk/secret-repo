@@ -9,6 +9,7 @@ import 'core/config/supabase_config.dart';
 import 'features/auth/auth_repository.dart';
 import 'features/auth/auth_screen.dart';
 import 'features/dashboard/dashboard_screen.dart';
+import 'features/notifications/notifications_screen.dart';
 import 'features/transactions/transactions_screen.dart';
 
 Future<void> main() async {
@@ -35,7 +36,10 @@ final _routerProvider = Provider.family<GoRouter, String>((
     redirect: (context, state) {
       final path = state.uri.path;
       final isAuthRoute = path == '/sign-in' || path.startsWith('/sign-up');
-      final isProtectedRoute = path == '/dashboard' || path == '/transactions';
+      final isProtectedRoute =
+          path == '/dashboard' ||
+          path == '/transactions' ||
+          path == '/notifications';
 
       if (!authRepository.isSignedIn && isProtectedRoute) {
         return '/sign-in';
@@ -75,6 +79,10 @@ final _routerProvider = Provider.family<GoRouter, String>((
       GoRoute(
         path: '/transactions',
         builder: (context, state) => const TransactionsScreen(),
+      ),
+      GoRoute(
+        path: '/notifications',
+        builder: (context, state) => const NotificationsScreen(),
       ),
     ],
   );

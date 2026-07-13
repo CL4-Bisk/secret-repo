@@ -30,10 +30,22 @@ final transactionHistoryProvider = FutureProvider<TransactionHistory>((ref) {
   return ref.watch(dashboardRepositoryProvider).fetchTransactionHistory();
 });
 
+final notificationHistoryProvider = FutureProvider<NotificationHistory>((ref) {
+  ref.watch(authUserChangesProvider);
+
+  return ref.watch(dashboardRepositoryProvider).fetchNotificationHistory();
+});
+
 abstract interface class DashboardRepositoryContract {
   Future<DashboardSummary> fetchSummary();
 
   Future<TransactionHistory> fetchTransactionHistory();
+
+  Future<NotificationHistory> fetchNotificationHistory();
+
+  Future<void> markNotificationRead({required String notificationId});
+
+  Future<void> markAllNotificationsRead();
 
   Future<void> createOwnerApartment({required String name});
 
@@ -180,6 +192,55 @@ class DashboardRepository implements DashboardRepositoryContract {
       dues: summary.dues,
       paymentProofs: paymentProofs,
     );
+  }
+
+  @override
+  Future<NotificationHistory> fetchNotificationHistory() async {
+    final userId = authRepository.currentUserId;
+    if (userId == null) {
+      return const NotificationHistory();
+    }
+
+    return NotificationHistory(
+      notifications: await _fetchNotifications(userId: userId, limit: 100),
+    );
+  }
+
+  @override
+  Future<void> markNotificationRead({required String notificationId}) async {
+    final userId = authRepository.currentUserId;
+    if (userId == null) {
+      throw StateError('You must be signed in to mark notifications read.');
+    }
+
+    final trimmedNotificationId = notificationId.trim();
+    if (trimmedNotificationId.isEmpty) {
+      throw ArgumentError.value(
+        notificationId,
+        'notificationId',
+        'Notification id is required.',
+      );
+    }
+
+    await client
+        .from('notifications')
+        .update(notificationReadUpdate())
+        .eq('id', trimmedNotificationId)
+        .eq('recipient_user_id', userId);
+  }
+
+  @override
+  Future<void> markAllNotificationsRead() async {
+    final userId = authRepository.currentUserId;
+    if (userId == null) {
+      throw StateError('You must be signed in to mark notifications read.');
+    }
+
+    await client
+        .from('notifications')
+        .update(notificationReadUpdate())
+        .eq('recipient_user_id', userId)
+        .isFilter('read_at', null);
   }
 
   @override
@@ -547,6 +608,7 @@ profiles!payment_proofs_boarder_user_id_fkey(full_name)
 
   Future<List<DashboardNotification>> _fetchNotifications({
     required String userId,
+    int limit = 5,
   }) async {
     final rows = await client
         .from('notifications')
@@ -555,7 +617,7 @@ profiles!payment_proofs_boarder_user_id_fkey(full_name)
         )
         .eq('recipient_user_id', userId)
         .order('created_at', ascending: false)
-        .limit(5);
+        .limit(limit);
 
     return [for (final row in rows) notificationFromRow(row)];
   }
@@ -971,6 +1033,10 @@ profiles!payment_proofs_boarder_user_id_fkey(full_name)
     );
   }
 
+  static Map<String, Object> notificationReadUpdate({DateTime? readAt}) {
+    return {'read_at': (readAt ?? DateTime.now()).toUtc().toIso8601String()};
+  }
+
   DashboardMembership? _membershipFromRow(Map<String, dynamic>? row) {
     if (row == null) {
       return null;
@@ -1200,6 +1266,17 @@ class TransactionHistory {
   final List<DashboardPaymentProof> paymentProofs;
 
   bool get isOwner => summary.membership?.isOwner == true;
+}
+
+class NotificationHistory {
+  const NotificationHistory({this.notifications = const []});
+
+  final List<DashboardNotification> notifications;
+
+  int get unreadCount =>
+      notifications.where((notification) => notification.isUnread).length;
+
+  bool get hasUnread => unreadCount > 0;
 }
 
 class DashboardNotification {

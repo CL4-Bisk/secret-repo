@@ -341,6 +341,12 @@ class _NotificationsCard extends StatelessWidget {
                     label: Text('$unreadCount unread'),
                     visualDensity: VisualDensity.compact,
                   ),
+                TextButton.icon(
+                  key: const Key('dashboard-notifications-link'),
+                  onPressed: () => context.go('/notifications'),
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('View all notifications'),
+                ),
               ],
             ),
             const SizedBox(height: 16),
