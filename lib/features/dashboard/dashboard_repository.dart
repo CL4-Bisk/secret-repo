@@ -83,7 +83,7 @@ class DashboardRepository implements DashboardRepositoryContract {
   });
 
   final SupabaseClient client;
-  final AuthRepository authRepository;
+  final AuthRepositoryContract authRepository;
 
   @override
   Future<DashboardSummary> fetchSummary() async {
@@ -133,6 +133,7 @@ class DashboardRepository implements DashboardRepositoryContract {
             organizationId: activeMembership!.organizationId!,
           )
         : const <DashboardPaymentProof>[];
+    final notifications = await _fetchNotifications(userId: userId);
 
     return DashboardSummary(
       displayName: _readString(profile, 'full_name') ?? email,
@@ -143,6 +144,7 @@ class DashboardRepository implements DashboardRepositoryContract {
       dues: dues,
       paymentSettings: paymentSettings,
       paymentProofs: paymentProofs,
+      notifications: notifications,
     );
   }
 
@@ -543,6 +545,21 @@ profiles!payment_proofs_boarder_user_id_fkey(full_name)
     return proofs;
   }
 
+  Future<List<DashboardNotification>> _fetchNotifications({
+    required String userId,
+  }) async {
+    final rows = await client
+        .from('notifications')
+        .select(
+          'id, organization_id, recipient_user_id, actor_user_id, type, title, body, read_at, created_at',
+        )
+        .eq('recipient_user_id', userId)
+        .order('created_at', ascending: false)
+        .limit(5);
+
+    return [for (final row in rows) notificationFromRow(row)];
+  }
+
   Future<void> _removeUploadedProofIfUnused(String storagePath) async {
     try {
       await client.storage.from(paymentProofBucket).remove([storagePath]);
@@ -938,6 +955,22 @@ profiles!payment_proofs_boarder_user_id_fkey(full_name)
     );
   }
 
+  static DashboardNotification notificationFromRow(Map<String, dynamic> row) {
+    return DashboardNotification(
+      id: _readString(row, 'id') ?? '',
+      organizationId: _readString(row, 'organization_id') ?? '',
+      recipientUserId: _readString(row, 'recipient_user_id') ?? '',
+      actorUserId: _readString(row, 'actor_user_id'),
+      type: _readString(row, 'type') ?? 'notification',
+      title: _readString(row, 'title') ?? 'Notification',
+      body: _readString(row, 'body') ?? '',
+      readAt: _readDateTime(row, 'read_at'),
+      createdAt:
+          _readDateTime(row, 'created_at') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+    );
+  }
+
   DashboardMembership? _membershipFromRow(Map<String, dynamic>? row) {
     if (row == null) {
       return null;
@@ -1083,6 +1116,7 @@ class DashboardSummary {
     this.dues = const [],
     this.paymentSettings,
     this.paymentProofs = const [],
+    this.notifications = const [],
   });
 
   final String displayName;
@@ -1093,6 +1127,10 @@ class DashboardSummary {
   final List<DashboardDue> dues;
   final DashboardPaymentSettings? paymentSettings;
   final List<DashboardPaymentProof> paymentProofs;
+  final List<DashboardNotification> notifications;
+
+  int get unreadNotificationCount =>
+      notifications.where((notification) => notification.isUnread).length;
 
   String get primaryIdentityLabel =>
       displayName.isNotEmpty ? displayName : email;
@@ -1162,6 +1200,36 @@ class TransactionHistory {
   final List<DashboardPaymentProof> paymentProofs;
 
   bool get isOwner => summary.membership?.isOwner == true;
+}
+
+class DashboardNotification {
+  const DashboardNotification({
+    required this.id,
+    required this.organizationId,
+    required this.recipientUserId,
+    required this.type,
+    required this.title,
+    required this.body,
+    required this.createdAt,
+    this.actorUserId,
+    this.readAt,
+  });
+
+  final String id;
+  final String organizationId;
+  final String recipientUserId;
+  final String? actorUserId;
+  final String type;
+  final String title;
+  final String body;
+  final DateTime createdAt;
+  final DateTime? readAt;
+
+  bool get isUnread => readAt == null;
+
+  String get statusLabel => isUnread ? 'Unread' : 'Read';
+
+  String get createdAtLabel => DashboardRepository._formatDate(createdAt);
 }
 
 class DashboardMembership {

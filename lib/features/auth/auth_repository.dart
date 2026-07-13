@@ -7,7 +7,7 @@ final supabaseClientProvider = Provider<SupabaseClient>(
   (ref) => Supabase.instance.client,
 );
 
-final authRepositoryProvider = Provider<AuthRepository>(
+final authRepositoryProvider = Provider<AuthRepositoryContract>(
   (ref) => AuthRepository(ref.watch(supabaseClientProvider)),
 );
 
@@ -63,23 +63,53 @@ class AuthUserSnapshot {
   int get hashCode => Object.hash(id, email, intendedRole);
 }
 
-class AuthRepository {
+abstract interface class AuthRepositoryContract {
+  bool get isSignedIn;
+
+  String? get currentUserId;
+
+  String? get currentUserEmail;
+
+  AuthIntendedRole? get currentUserIntendedRole;
+
+  AuthUserSnapshot? get currentUserSnapshot;
+
+  Stream<AuthUserSnapshot?> get authStateChanges;
+
+  Future<void> signIn({required String email, required String password});
+
+  Future<void> signOut();
+
+  Future<void> signUp({
+    required String fullName,
+    required String email,
+    required String password,
+    required AuthIntendedRole intendedRole,
+  });
+}
+
+class AuthRepository implements AuthRepositoryContract {
   const AuthRepository(this._client);
 
   final SupabaseClient _client;
 
+  @override
   bool get isSignedIn => _client.auth.currentSession != null;
 
+  @override
   String? get currentUserId => _client.auth.currentUser?.id;
 
+  @override
   String? get currentUserEmail => _client.auth.currentUser?.email;
 
+  @override
   AuthIntendedRole? get currentUserIntendedRole {
     final metadata = _client.auth.currentUser?.userMetadata;
 
     return AuthIntendedRole.fromValue(metadata?['intended_role']);
   }
 
+  @override
   AuthUserSnapshot? get currentUserSnapshot {
     final user = _client.auth.currentUser;
     if (user == null) {
@@ -93,10 +123,12 @@ class AuthRepository {
     );
   }
 
+  @override
   Stream<AuthUserSnapshot?> get authStateChanges {
     return _client.auth.onAuthStateChange.map((_) => currentUserSnapshot);
   }
 
+  @override
   Future<void> signIn({required String email, required String password}) async {
     await _client.auth.signInWithPassword(
       email: email.trim(),
@@ -104,10 +136,12 @@ class AuthRepository {
     );
   }
 
+  @override
   Future<void> signOut() async {
     await _client.auth.signOut();
   }
 
+  @override
   Future<void> signUp({
     required String fullName,
     required String email,

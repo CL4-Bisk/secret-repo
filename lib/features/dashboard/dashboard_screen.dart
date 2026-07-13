@@ -218,6 +218,13 @@ class _DashboardContent extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 24),
+                  if (summary.notifications.isNotEmpty) ...[
+                    _NotificationsCard(
+                      notifications: summary.notifications,
+                      unreadCount: summary.unreadNotificationCount,
+                    ),
+                    const SizedBox(height: 24),
+                  ],
                   if (summary.membership == null) ...[
                     _PendingSetupSection(
                       intendedRole: summary.intendedRole,
@@ -292,6 +299,120 @@ class _DashboardContent extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _NotificationsCard extends StatelessWidget {
+  const _NotificationsCard({
+    required this.notifications,
+    required this.unreadCount,
+  });
+
+  final List<DashboardNotification> notifications;
+  final int unreadCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.tertiaryContainer,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  'Notifications',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (unreadCount > 0)
+                  Chip(
+                    label: Text('$unreadCount unread'),
+                    visualDensity: VisualDensity.compact,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            for (final (index, notification) in notifications.indexed) ...[
+              if (index > 0) const Divider(height: 24),
+              _NotificationListItem(notification: notification),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NotificationListItem extends StatelessWidget {
+  const _NotificationListItem({required this.notification});
+
+  final DashboardNotification notification;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CircleAvatar(
+          backgroundColor: colorScheme.surface,
+          foregroundColor: colorScheme.primary,
+          child: Icon(
+            notification.isUnread
+                ? Icons.notifications_active_outlined
+                : Icons.notifications_none_outlined,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                notification.title,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                notification.body,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  Chip(
+                    label: Text(notification.statusLabel),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  Chip(
+                    label: Text(notification.createdAtLabel),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
